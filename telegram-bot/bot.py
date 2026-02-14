@@ -204,16 +204,17 @@ I'll understand and help! 🤖
         # Send typing indicator
         await update.message.chat.send_action(ChatAction.TYPING)
 
-        # Call main.py's handle_query function
-        result = await handle_query(
-            f"Search for properties: {query}. Return top 5 results with key metrics.",
-            user_id=str(user_id)
-        )
-
-        self.increment_usage(user_id)
-
-        # Split long messages
-        await self.send_split_message(update, result)
+        try:
+            # Call main.py's handle_query function
+            result = await handle_query(
+                f"Search for properties: {query}. Return top 5 results with key metrics.",
+                user_id=str(user_id)
+            )
+            self.increment_usage(user_id)
+            await self.send_split_message(update, result)
+        except Exception as e:
+            error_msg = self.format_error_message(e)
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
 
     async def cmd_analyze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Analyze a specific property"""
@@ -238,25 +239,29 @@ I'll understand and help! 🤖
             "liquidity analysis, and investment scoring."
         )
 
-        # Call main.py with full analysis request
-        result = await handle_query(
-            f"Perform comprehensive institutional analysis on: {property_query}. "
-            f"Include all 4 pillars: Macro/Market, Liquidity, Technical, Legal. "
-            f"Provide GO/NO-GO recommendation with investment score.",
-            user_id=str(user_id)
-        )
+        try:
+            # Call main.py with full analysis request
+            result = await handle_query(
+                f"Perform comprehensive institutional analysis on: {property_query}. "
+                f"Include all 4 pillars: Macro/Market, Liquidity, Technical, Legal. "
+                f"Provide GO/NO-GO recommendation with investment score.",
+                user_id=str(user_id)
+            )
 
-        self.increment_usage(user_id)
+            self.increment_usage(user_id)
 
-        # If Pro or Enterprise, offer PDF report
-        if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
-            keyboard = [
-                [InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query}")],
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await self.send_split_message(update, result, reply_markup=reply_markup)
-        else:
-            await self.send_split_message(update, result)
+            # If Pro or Enterprise, offer PDF report
+            if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
+                keyboard = [
+                    [InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query}")],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await self.send_split_message(update, result, reply_markup=reply_markup)
+            else:
+                await self.send_split_message(update, result)
+        except Exception as e:
+            error_msg = self.format_error_message(e)
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
 
     async def cmd_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show subscription options"""
@@ -320,15 +325,18 @@ Type /subscribe to upgrade for more queries and features!
 
         await update.message.chat.send_action(ChatAction.TYPING)
 
-        result = await handle_query(
-            f"Get comprehensive market trends for {zone}. "
-            f"Include: price trends, supply pipeline, liquidity metrics, "
-            f"and investment recommendation.",
-            user_id=str(user_id)
-        )
-
-        self.increment_usage(user_id)
-        await self.send_split_message(update, result)
+        try:
+            result = await handle_query(
+                f"Get comprehensive market trends for {zone}. "
+                f"Include: price trends, supply pipeline, liquidity metrics, "
+                f"and investment recommendation.",
+                user_id=str(user_id)
+            )
+            self.increment_usage(user_id)
+            await self.send_split_message(update, result)
+        except Exception as e:
+            error_msg = self.format_error_message(e)
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
 
     async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Compare properties"""
@@ -348,15 +356,18 @@ Type /subscribe to upgrade for more queries and features!
 
         await update.message.chat.send_action(ChatAction.TYPING)
 
-        result = await handle_query(
-            f"Compare these properties: {query}. "
-            f"Create side-by-side comparison with price, location, "
-            f"chiller costs, ROI, and recommendation.",
-            user_id=str(user_id)
-        )
-
-        self.increment_usage(user_id)
-        await self.send_split_message(update, result)
+        try:
+            result = await handle_query(
+                f"Compare these properties: {query}. "
+                f"Create side-by-side comparison with price, location, "
+                f"chiller costs, ROI, and recommendation.",
+                user_id=str(user_id)
+            )
+            self.increment_usage(user_id)
+            await self.send_split_message(update, result)
+        except Exception as e:
+            error_msg = self.format_error_message(e)
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language queries"""
@@ -370,11 +381,15 @@ Type /subscribe to upgrade for more queries and features!
 
         await update.message.chat.send_action(ChatAction.TYPING)
 
-        # Call main.py's handle_query directly
-        result = await handle_query(query, user_id=str(user_id))
-
-        self.increment_usage(user_id)
-        await self.send_split_message(update, result)
+        try:
+            # Call main.py's handle_query directly
+            result = await handle_query(query, user_id=str(user_id))
+            self.increment_usage(user_id)
+            await self.send_split_message(update, result)
+        except Exception as e:
+            # Handle API errors gracefully
+            error_msg = self.format_error_message(e)
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks"""
@@ -440,6 +455,46 @@ Type /subscribe to upgrade for more queries and features!
             parse_mode="Markdown",
             reply_markup=reply_markup,
         )
+
+    def format_error_message(self, error: Exception) -> str:
+        """Format error message for user"""
+        error_str = str(error)
+
+        # Check for specific error types
+        if "credit balance is too low" in error_str.lower():
+            return (
+                "❌ *API Credits Issue*\n\n"
+                "The Anthropic API credits are running low.\n\n"
+                "📧 Please contact support or try again later.\n\n"
+                "_Error: Insufficient API credits_"
+            )
+        elif "rate limit" in error_str.lower():
+            return (
+                "⏱️ *Rate Limit Reached*\n\n"
+                "Too many requests. Please wait a moment and try again.\n\n"
+                "_The API has temporary rate limits._"
+            )
+        elif "timeout" in error_str.lower():
+            return (
+                "⏱️ *Request Timeout*\n\n"
+                "The analysis took too long. Please try a simpler query.\n\n"
+                "_The API request timed out._"
+            )
+        elif "network" in error_str.lower() or "connection" in error_str.lower():
+            return (
+                "🌐 *Connection Issue*\n\n"
+                "Could not connect to the AI service.\n\n"
+                "Please try again in a moment.\n\n"
+                "_Network connectivity error_"
+            )
+        else:
+            # Generic error
+            return (
+                "❌ *Something Went Wrong*\n\n"
+                "An error occurred while processing your request.\n\n"
+                "Please try again or contact support if the issue persists.\n\n"
+                f"_Error details: {error_str[:100]}_"
+            )
 
     async def send_split_message(self, update: Update, text: str, reply_markup=None):
         """Split long messages to respect Telegram's 4096 char limit"""

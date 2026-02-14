@@ -38,7 +38,8 @@ def main():
     print()
 
     # Import and run the Telegram bot
-    from telegram_bot.bot import TelegramBotServer
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'telegram-bot'))
+    from bot import TelegramBotServer
 
     bot = TelegramBotServer()
     asyncio.run(bot.run())
