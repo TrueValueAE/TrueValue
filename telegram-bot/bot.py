@@ -211,7 +211,8 @@ I'll understand and help! 🤖
                 user_id=str(user_id)
             )
             self.increment_usage(user_id)
-            await self.send_split_message(update, result)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e)
             try:
@@ -253,15 +254,18 @@ I'll understand and help! 🤖
 
             self.increment_usage(user_id)
 
+            # Extract response text
+            response_text = result.response if hasattr(result, 'response') else str(result)
+
             # If Pro or Enterprise, offer PDF report
             if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
                 keyboard = [
                     [InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query}")],
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await self.send_split_message(update, result, reply_markup=reply_markup)
+                await self.send_split_message(update, response_text, reply_markup=reply_markup)
             else:
-                await self.send_split_message(update, result)
+                await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e)
             try:
@@ -339,7 +343,8 @@ Type /subscribe to upgrade for more queries and features!
                 user_id=str(user_id)
             )
             self.increment_usage(user_id)
-            await self.send_split_message(update, result)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e)
             try:
@@ -373,7 +378,8 @@ Type /subscribe to upgrade for more queries and features!
                 user_id=str(user_id)
             )
             self.increment_usage(user_id)
-            await self.send_split_message(update, result)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e)
             try:
@@ -397,7 +403,9 @@ Type /subscribe to upgrade for more queries and features!
             # Call main.py's handle_query directly
             result = await handle_query(query, user_id=str(user_id))
             self.increment_usage(user_id)
-            await self.send_split_message(update, result)
+            # Extract the response text from QueryResponse object
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await self.send_split_message(update, response_text)
         except Exception as e:
             # Handle API errors gracefully
             error_msg = self.format_error_message(e)
