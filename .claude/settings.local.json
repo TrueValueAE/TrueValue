@@ -9,7 +9,8 @@
       "Bash(source:*)",
       "Bash(pip install:*)",
       "Bash(python run.py:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(python set_bot_commands.py:*)"
     ]
   }
 }

@@ -214,7 +214,10 @@ I'll understand and help! 🤖
             await self.send_split_message(update, result)
         except Exception as e:
             error_msg = self.format_error_message(e)
-            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(error_msg)
 
     async def cmd_analyze(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Analyze a specific property"""
@@ -261,7 +264,10 @@ I'll understand and help! 🤖
                 await self.send_split_message(update, result)
         except Exception as e:
             error_msg = self.format_error_message(e)
-            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(error_msg)
 
     async def cmd_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show subscription options"""
@@ -336,7 +342,10 @@ Type /subscribe to upgrade for more queries and features!
             await self.send_split_message(update, result)
         except Exception as e:
             error_msg = self.format_error_message(e)
-            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(error_msg)
 
     async def cmd_compare(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Compare properties"""
@@ -367,7 +376,10 @@ Type /subscribe to upgrade for more queries and features!
             await self.send_split_message(update, result)
         except Exception as e:
             error_msg = self.format_error_message(e)
-            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(error_msg)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language queries"""
@@ -389,7 +401,10 @@ Type /subscribe to upgrade for more queries and features!
         except Exception as e:
             # Handle API errors gracefully
             error_msg = self.format_error_message(e)
-            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(error_msg, parse_mode="Markdown")
+            except:
+                await update.message.reply_text(error_msg)
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks"""
@@ -500,38 +515,69 @@ Type /subscribe to upgrade for more queries and features!
         """Split long messages to respect Telegram's 4096 char limit"""
         MAX_LENGTH = 4096
 
-        if len(text) <= MAX_LENGTH:
-            await update.message.reply_text(
-                text,
-                parse_mode="Markdown",
-                reply_markup=reply_markup
-            )
-            return
+        # Try to send with Markdown first
+        try:
+            if len(text) <= MAX_LENGTH:
+                await update.message.reply_text(
+                    text,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup
+                )
+                return
 
-        # Split by paragraphs first
-        parts = []
-        current = ""
+            # Split by paragraphs first
+            parts = []
+            current = ""
 
-        for paragraph in text.split("\n\n"):
-            if len(current) + len(paragraph) + 2 < MAX_LENGTH:
-                current += paragraph + "\n\n"
+            for paragraph in text.split("\n\n"):
+                if len(current) + len(paragraph) + 2 < MAX_LENGTH:
+                    current += paragraph + "\n\n"
+                else:
+                    if current:
+                        parts.append(current.strip())
+                    current = paragraph + "\n\n"
+
+            if current:
+                parts.append(current.strip())
+
+            # Send all parts
+            for i, part in enumerate(parts):
+                is_last = (i == len(parts) - 1)
+                await update.message.reply_text(
+                    part,
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup if is_last else None
+                )
+                await asyncio.sleep(0.5)  # Small delay between messages
+
+        except Exception as e:
+            # If Markdown parsing fails, send without formatting
+            if len(text) <= MAX_LENGTH:
+                await update.message.reply_text(
+                    text,
+                    reply_markup=reply_markup
+                )
             else:
+                # Split and send without Markdown
+                parts = []
+                current = ""
+                for paragraph in text.split("\n\n"):
+                    if len(current) + len(paragraph) + 2 < MAX_LENGTH:
+                        current += paragraph + "\n\n"
+                    else:
+                        if current:
+                            parts.append(current.strip())
+                        current = paragraph + "\n\n"
                 if current:
                     parts.append(current.strip())
-                current = paragraph + "\n\n"
 
-        if current:
-            parts.append(current.strip())
-
-        # Send all parts
-        for i, part in enumerate(parts):
-            is_last = (i == len(parts) - 1)
-            await update.message.reply_text(
-                part,
-                parse_mode="Markdown",
-                reply_markup=reply_markup if is_last else None
-            )
-            await asyncio.sleep(0.5)  # Small delay between messages
+                for i, part in enumerate(parts):
+                    is_last = (i == len(parts) - 1)
+                    await update.message.reply_text(
+                        part,
+                        reply_markup=reply_markup if is_last else None
+                    )
+                    await asyncio.sleep(0.5)
 
     async def process_upgrade(self, query, tier: str):
         """Process subscription upgrade"""
