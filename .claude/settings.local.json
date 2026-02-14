@@ -11,7 +11,9 @@
       "Bash(python run.py:*)",
       "Bash(tee:*)",
       "Bash(python set_bot_commands.py:*)",
-      "Bash(python test_bot.py:*)"
+      "Bash(python test_bot.py:*)",
+      "Bash(python test_suite.py:*)",
+      "Bash(python check_telegram.py:*)"
     ]
   }
 }
