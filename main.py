@@ -1609,27 +1609,43 @@ async def handle_query(query: str, user_id: str = "anonymous") -> QueryResponse:
             )
 
         elif response.stop_reason == "tool_use":
-            # Append assistant message with tool_use blocks
-            conversation.append({"role": "assistant", "content": response.content})
-
+            # Convert ContentBlocks to plain dicts for serialization
+            assistant_content = []
             tool_results = []
+
             for block in response.content:
-                if block.type == "tool_use":
-                    tool_name  = block.name
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                elif block.type == "tool_use":
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input
+                    })
+
+                    # Execute the tool
+                    tool_name = block.name
                     tool_input = block.input
-                    tool_id    = block.id
+                    tool_id = block.id
 
                     tools_used.append(tool_name)
                     logger.info("Executing tool: %s", tool_name)
 
                     result = await _execute_tool(tool_name, tool_input)
 
+                    # Create tool result
+                    result_str = json.dumps(result) if not isinstance(result, str) else result
+
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_id,
-                        "content": json.dumps(result),
+                        "content": result_str,
                     })
 
+            # Append assistant message with tool uses
+            conversation.append({"role": "assistant", "content": assistant_content})
+            # Append user message with tool results
             conversation.append({"role": "user", "content": tool_results})
 
         else:

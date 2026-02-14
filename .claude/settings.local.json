@@ -10,7 +10,8 @@
       "Bash(pip install:*)",
       "Bash(python run.py:*)",
       "Bash(tee:*)",
-      "Bash(python set_bot_commands.py:*)"
+      "Bash(python set_bot_commands.py:*)",
+      "Bash(python test_bot.py:*)"
     ]
   }
 }
