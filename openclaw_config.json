@@ -1,0 +1,342 @@
+{
+  "agent_name": "Dubai Estate Institutional Analyst",
+  "agent_version": "1.0.0",
+  "agent_description": "Institutional-grade Dubai real estate research and analysis agent with comprehensive market intelligence",
+  
+  "system_prompt": "You are an institutional-grade Dubai real estate analyst. Your role is to provide comprehensive, data-driven analysis across 4 critical pillars: 1) Macro & Market Analysis, 2) Liquidity & Exit Strategy, 3) Technical & Engineering Due Diligence, 4) Legal & Regulatory Compliance. Always cross-reference multiple data sources, flag risks explicitly, and provide actionable insights with confidence scores.",
+  
+  "research_modules": {
+    "macro_market": {
+      "enabled": true,
+      "priority": "critical",
+      "data_sources": [
+        "dubai_land_department_api",
+        "reidin_data",
+        "property_finder_analytics",
+        "bayut_market_trends",
+        "dubai_statistics_center",
+        "fred_economic_data",
+        "trading_economics_uae"
+      ],
+      "analysis_points": [
+        "supply_pipeline_analysis",
+        "completion_schedules_by_zone",
+        "interest_rate_sensitivity",
+        "oil_price_correlation",
+        "mortgage_lending_trends",
+        "foreign_investment_flows",
+        "regulatory_changes_impact"
+      ],
+      "refresh_interval": "daily"
+    },
+    
+    "liquidity_exit": {
+      "enabled": true,
+      "priority": "critical",
+      "data_sources": [
+        "dubai_land_department_transactions",
+        "property_finder_sales_data",
+        "bayut_listing_analytics",
+        "mortgage_registry_data",
+        "broker_network_feeds"
+      ],
+      "metrics": [
+        "days_on_market_by_zone",
+        "price_volume_divergence",
+        "cash_vs_mortgage_ratio",
+        "repeat_sale_velocity",
+        "off_plan_vs_ready_liquidity",
+        "buyer_nationality_mix",
+        "transaction_size_distribution"
+      ],
+      "alerts": {
+        "high_dom": 45,
+        "volume_drop_threshold": 0.3,
+        "price_volatility_threshold": 0.15
+      },
+      "refresh_interval": "daily"
+    },
+    
+    "technical_engineering": {
+      "enabled": true,
+      "priority": "high",
+      "data_sources": [
+        "empower_chiller_rates",
+        "lootah_chiller_rates",
+        "district_cooling_databases",
+        "dewa_consumption_data",
+        "building_permit_records",
+        "snagging_report_aggregators",
+        "maintenance_cost_databases"
+      ],
+      "inspection_checklist": [
+        "mep_audit_status",
+        "chiller_capacity_charges",
+        "fixed_vs_variable_cooling_fees",
+        "elevator_maintenance_contracts",
+        "fire_safety_compliance",
+        "water_proofing_warranty",
+        "structural_integrity_reports",
+        "reserve_fund_adequacy"
+      ],
+      "data_collection": {
+        "reddit_snagging_groups": ["r/dubai", "r/DubaiPetrolHeads"],
+        "facebook_groups": ["Dubai Property Owners", "Dubai Expats"],
+        "google_maps_reviews": true,
+        "mollak_integration": true
+      },
+      "refresh_interval": "weekly"
+    },
+    
+    "legal_regulatory": {
+      "enabled": true,
+      "priority": "critical",
+      "data_sources": [
+        "dubai_rest_api",
+        "dubai_land_department_registry",
+        "rental_dispute_center_records",
+        "rera_compliance_database",
+        "escrow_account_tracker",
+        "developer_reputation_database"
+      ],
+      "verification_steps": [
+        "title_deed_authentication",
+        "ownership_chain_verification",
+        "encumbrance_check",
+        "rental_dispute_history",
+        "service_charge_validation",
+        "building_permit_compliance",
+        "master_developer_approvals",
+        "mortgage_lien_status"
+      ],
+      "risk_scoring": {
+        "eviction_difficulty_zones": ["International City", "Discovery Gardens"],
+        "high_service_charge_buildings": true,
+        "developer_delivery_track_record": true
+      },
+      "refresh_interval": "daily"
+    }
+  },
+  
+  "data_integrations": {
+    "required_apis": [
+      {
+        "name": "Dubai REST API",
+        "endpoint": "https://dubairest.gov.ae/api",
+        "auth_type": "api_key",
+        "rate_limit": "100/hour",
+        "critical": true
+      },
+      {
+        "name": "Dubai Land Department Open Data",
+        "endpoint": "https://www.dubailand.gov.ae/en/open-data",
+        "auth_type": "public",
+        "rate_limit": "unlimited",
+        "critical": true
+      },
+      {
+        "name": "Property Finder API",
+        "endpoint": "https://api.propertyfinder.ae",
+        "auth_type": "api_key",
+        "rate_limit": "1000/day",
+        "critical": false
+      },
+      {
+        "name": "Bayut API",
+        "endpoint": "https://api.bayut.com",
+        "auth_type": "api_key",
+        "rate_limit": "500/day",
+        "critical": false
+      },
+      {
+        "name": "FRED Economic Data",
+        "endpoint": "https://api.stlouisfed.org/fred",
+        "auth_type": "api_key",
+        "rate_limit": "120/minute",
+        "critical": false
+      }
+    ],
+    
+    "web_scraping_targets": [
+      {
+        "name": "Empower Chiller Rates",
+        "url": "https://www.empower.ae/en/residential-rates",
+        "frequency": "monthly",
+        "selectors": {
+          "rate_table": "table.chiller-rates",
+          "fixed_fees": "div.fixed-charges"
+        }
+      },
+      {
+        "name": "Lootah Chiller Rates",
+        "url": "https://www.lpdc.ae/en/tariffs",
+        "frequency": "monthly",
+        "selectors": {
+          "rate_table": "table.tariff-rates"
+        }
+      },
+      {
+        "name": "DLD Mollak Service Charge Index",
+        "url": "https://mollak.dubailand.gov.ae",
+        "frequency": "weekly",
+        "auth_required": true
+      }
+    ],
+    
+    "social_listening": {
+      "reddit": {
+        "subreddits": ["dubai", "DubaiPetrolHeads", "dubaiproperty"],
+        "keywords": ["snagging", "defects", "maintenance", "service charge", "chiller"],
+        "sentiment_analysis": true
+      },
+      "facebook": {
+        "groups": ["Dubai Property Owners", "Dubai Real Estate Investors"],
+        "keywords": ["issues", "problems", "avoid", "scam"]
+      },
+      "google_maps": {
+        "building_reviews": true,
+        "min_rating_threshold": 3.5,
+        "keyword_extraction": true
+      }
+    }
+  },
+  
+  "analysis_workflows": {
+    "property_evaluation": {
+      "steps": [
+        "fetch_property_details",
+        "macro_market_context",
+        "liquidity_assessment",
+        "technical_due_diligence",
+        "legal_verification",
+        "comparative_analysis",
+        "risk_scoring",
+        "recommendation_generation"
+      ],
+      "output_format": "institutional_report"
+    },
+    
+    "zone_comparison": {
+      "steps": [
+        "gather_zone_metrics",
+        "supply_demand_analysis",
+        "liquidity_ranking",
+        "infrastructure_assessment",
+        "regulatory_risk_mapping",
+        "yield_vs_appreciation_matrix"
+      ],
+      "output_format": "comparative_matrix"
+    },
+    
+    "portfolio_optimization": {
+      "steps": [
+        "current_portfolio_analysis",
+        "market_opportunity_scan",
+        "risk_concentration_check",
+        "rebalancing_recommendations",
+        "exit_strategy_planning"
+      ],
+      "output_format": "portfolio_report"
+    }
+  },
+  
+  "risk_framework": {
+    "red_flags": [
+      {
+        "category": "supply_oversupply",
+        "threshold": "completion_ratio > 2.0",
+        "severity": "high",
+        "zones_watch": ["Business Bay", "JVC", "JVT"]
+      },
+      {
+        "category": "liquidity_crisis",
+        "threshold": "dom > 90 AND volume_drop > 0.4",
+        "severity": "critical",
+        "action": "avoid_new_investments"
+      },
+      {
+        "category": "chiller_trap",
+        "threshold": "fixed_chiller_fee > AED 15/sqft/year",
+        "severity": "high",
+        "action": "recalculate_roi"
+      },
+      {
+        "category": "legal_disputes",
+        "threshold": "rental_disputes > 5/year",
+        "severity": "medium",
+        "action": "legal_review_required"
+      }
+    ],
+    
+    "confidence_scoring": {
+      "data_freshness_weight": 0.3,
+      "source_reliability_weight": 0.3,
+      "cross_validation_weight": 0.4,
+      "minimum_confidence_threshold": 0.7
+    }
+  },
+  
+  "output_templates": {
+    "institutional_report": {
+      "sections": [
+        "executive_summary",
+        "macro_market_overview",
+        "liquidity_exit_analysis",
+        "technical_engineering_audit",
+        "legal_regulatory_clearance",
+        "comparative_benchmarking",
+        "risk_matrix",
+        "recommendations"
+      ],
+      "format": "pdf",
+      "branding": true
+    },
+    
+    "quick_analysis": {
+      "sections": [
+        "key_metrics_dashboard",
+        "red_flags_only",
+        "go_no_go_decision"
+      ],
+      "format": "json"
+    }
+  },
+  
+  "automation": {
+    "daily_tasks": [
+      "fetch_new_transactions",
+      "update_dom_metrics",
+      "scan_regulatory_changes",
+      "monitor_interest_rates"
+    ],
+    "weekly_tasks": [
+      "zone_ranking_update",
+      "chiller_rate_check",
+      "snagging_report_aggregation",
+      "developer_watchlist_update"
+    ],
+    "monthly_tasks": [
+      "supply_pipeline_forecast",
+      "portfolio_rebalancing_analysis",
+      "market_report_generation"
+    ]
+  },
+  
+  "alerts": {
+    "critical": [
+      "new_regulatory_change",
+      "sudden_liquidity_drop",
+      "developer_default_risk"
+    ],
+    "high": [
+      "zone_oversupply_warning",
+      "interest_rate_change",
+      "major_infrastructure_delay"
+    ],
+    "medium": [
+      "service_charge_increase",
+      "chiller_rate_adjustment",
+      "new_competitor_entry"
+    ]
+  }
+}

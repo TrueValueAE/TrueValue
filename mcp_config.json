@@ -1,0 +1,71 @@
+{
+  "mcpServers": {
+    "dubai-rest-api": {
+      "command": "node",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/dubai-rest/index.js"],
+      "env": {
+        "DUBAI_REST_API_KEY": "${DUBAI_REST_API_KEY}"
+      }
+    },
+    
+    "dld-open-data": {
+      "command": "node",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/dld-data/index.js"],
+      "env": {
+        "DLD_API_ENDPOINT": "https://www.dubailand.gov.ae/en/open-data"
+      }
+    },
+    
+    "property-finder": {
+      "command": "node",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/property-finder/index.js"],
+      "env": {
+        "PROPERTY_FINDER_API_KEY": "${PROPERTY_FINDER_API_KEY}"
+      }
+    },
+    
+    "bayut-analytics": {
+      "command": "node",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/bayut/index.js"],
+      "env": {
+        "BAYUT_API_KEY": "${BAYUT_API_KEY}"
+      }
+    },
+    
+    "chiller-rates-scraper": {
+      "command": "python",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/chiller-scraper/server.py"],
+      "env": {
+        "SCRAPER_CACHE_DIR": "/tmp/chiller-cache"
+      }
+    },
+    
+    "social-intelligence": {
+      "command": "python",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/social-listener/server.py"],
+      "env": {
+        "REDDIT_CLIENT_ID": "${REDDIT_CLIENT_ID}",
+        "REDDIT_CLIENT_SECRET": "${REDDIT_CLIENT_SECRET}",
+        "FACEBOOK_ACCESS_TOKEN": "${FACEBOOK_ACCESS_TOKEN}"
+      }
+    },
+    
+    "economic-data": {
+      "command": "node",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/economic-data/index.js"],
+      "env": {
+        "FRED_API_KEY": "${FRED_API_KEY}",
+        "TRADING_ECONOMICS_KEY": "${TRADING_ECONOMICS_KEY}"
+      }
+    },
+    
+    "mollak-integration": {
+      "command": "python",
+      "args": ["/path/to/dubai-estate-agent/mcp-servers/mollak/server.py"],
+      "env": {
+        "MOLLAK_USERNAME": "${MOLLAK_USERNAME}",
+        "MOLLAK_PASSWORD": "${MOLLAK_PASSWORD}"
+      }
+    }
+  }
+}
