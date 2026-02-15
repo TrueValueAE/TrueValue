@@ -15,6 +15,8 @@ Import in bot:    from main import handle_query
 import os
 import json
 import logging
+import time
+import traceback
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -26,16 +28,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import anthropic
 
+# Import observability module
+from observability import (
+    setup_json_logging,
+    log_query_start,
+    log_query_complete,
+    log_user_error,
+    metrics_tracker,
+    user_analytics,
+    CostCalculator,
+    get_prometheus_metrics,
+    record_command_metrics,
+    record_web_search,
+)
+
 # =====================================================
 # LOGGING
 # =====================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("dubai_estate_ai")
+# Set up JSON structured logging
+logger = setup_json_logging("dubai_estate_ai")
 
 # =====================================================
 # APP INITIALISATION
@@ -977,6 +989,80 @@ async def search_building_issues(building_name: str):
     }
 
 
+async def web_search_dubai(query: str, num_results: int = 5) -> dict:
+    """
+    Search the web using Brave Search API for Dubai real estate information.
+    Appends 'Dubai real estate' context if not already present.
+    """
+    api_key = os.getenv("BRAVE_API_KEY", "")
+    if not api_key or api_key in ("demo", "your_brave_key_here", ""):
+        record_web_search("unavailable")
+        return {
+            "success": False,
+            "source": "web_search_unavailable",
+            "error": "BRAVE_API_KEY not set. Set it in .env for live web search.",
+            "suggestion": "Use other available tools for analysis, or set BRAVE_API_KEY for web search."
+        }
+
+    # Auto-append Dubai context for better results
+    search_query = query
+    if "dubai" not in query.lower():
+        search_query = f"{query} Dubai real estate"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={
+                    "q": search_query,
+                    "count": min(num_results, 10),
+                    "search_lang": "en",
+                    "freshness": "pm",  # past month for fresh data
+                },
+                headers={
+                    "Accept": "application/json",
+                    "Accept-Encoding": "gzip",
+                    "X-Subscription-Token": api_key,
+                },
+                timeout=15.0,
+            )
+
+        if response.status_code == 200:
+            data = response.json()
+            web_results = data.get("web", {}).get("results", [])
+
+            results = []
+            for r in web_results[:num_results]:
+                results.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "description": r.get("description", ""),
+                    "age": r.get("age", ""),
+                })
+
+            record_web_search("success")
+            return {
+                "success": True,
+                "source": "brave_web_search",
+                "query": search_query,
+                "total_results": len(results),
+                "results": results,
+            }
+        elif response.status_code == 429:
+            record_web_search("failure")
+            return {"success": False, "error": "Rate limited — try again shortly"}
+        else:
+            record_web_search("failure")
+            return {"success": False, "error": f"Brave API returned {response.status_code}"}
+
+    except httpx.TimeoutException:
+        record_web_search("failure")
+        return {"success": False, "error": "Web search timed out (15s)"}
+    except Exception as e:
+        record_web_search("failure")
+        return {"success": False, "error": f"Web search failed: {str(e)}"}
+
+
 async def analyze_investment(
     property_price: float,
     area_sqft: float,
@@ -1284,6 +1370,8 @@ async def _execute_tool(tool_name: str, tool_input: dict) -> dict:
         return await get_supply_pipeline(**tool_input)
     elif tool_name == "compare_properties":
         return await compare_properties(**tool_input)
+    elif tool_name == "web_search_dubai":
+        return await web_search_dubai(**tool_input)
     else:
         return {"error": f"Unknown tool: {tool_name}", "success": False}
 
@@ -1502,6 +1590,31 @@ TOOLS = [
             "required": ["property_a", "property_b"],
         },
     },
+    {
+        "name": "web_search_dubai",
+        "description": (
+            "Search the web for live Dubai real estate information using Brave Search. "
+            "Use this to find: current property listings and prices, market news and trends, "
+            "building reviews and snagging reports, developer reputation and track record, "
+            "regulatory changes and DLD announcements, off-plan project launches, "
+            "and any other real-time information not available in the other tools. "
+            "Automatically appends 'Dubai real estate' context to queries."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query. Be specific: e.g. 'Marina Gate Tower 1 reviews snagging', 'Business Bay oversupply 2026', 'Emaar Beachfront prices 2024'"
+                },
+                "num_results": {
+                    "type": "number",
+                    "description": "Number of results to return (1-10, default 5)"
+                }
+            },
+            "required": ["query"]
+        }
+    },
 ]
 
 # =====================================================
@@ -1509,8 +1622,24 @@ TOOLS = [
 # =====================================================
 
 SYSTEM_PROMPT = """You are TrueValue AI — an institutional-grade Dubai real estate analyst. \
-You combine data from live property portals, district cooling providers, DLD records, and \
+You combine data from live property portals, district cooling providers, DLD records, web search, and \
 social listening to deliver hedge-fund-quality analysis to individual investors.
+
+## OUTPUT FORMAT SELECTION
+
+**CONCISE FORMAT** (default for chat/Telegram):
+- Use when: Regular property questions, quick analysis, conversational queries
+- Style: Emoji-rich, visual dividers, grade system (A/B+/B), scannable on mobile
+- Length: 800-1200 words max
+- Template: See "CONCISE TEMPLATE" section below
+
+**FULL FORMAT** (institutional reports):
+- Use when: Query contains "full analysis", "detailed report", "PDF", "comprehensive", or "/analyze" command
+- Style: Formal sections, tables, all 11 components
+- Length: 2000-3000 words
+- Template: See "FULL TEMPLATE" section below
+
+**BOTH formats MUST include web search validation** — no exceptions.
 
 ## YOUR EXPERTISE DOMAINS
 
@@ -1530,6 +1659,7 @@ social listening to deliver hedge-fund-quality analysis to individual investors.
 **JVC (Jumeirah Village Circle)**: Yield trap. Headline yields look high (7–9%) but massive oversupply pipeline destroys net yields and exit liquidity. Tread carefully.
 **Palm Jumeirah**: Trophy asset. UHNW demand. Very limited supply. Excellent for capital preservation.
 **Dubai South**: Speculative long-hold. Massive pipeline. Not suitable for income investors.
+**Arjan**: High-yield outer zone. Family-oriented. Good for cash flow. Maintenance quality varies by building. Lower liquidity than premium zones.
 
 ### 4-Pillar Investment Framework
 When analysing any property, assess:
@@ -1548,118 +1678,468 @@ When analysing any property, assess:
 - Building > 15 years: Mandatory snagging and major maintenance escrow check
 - Service charge > AED 25/sqft/year: High — verify with RERA and factor into net yield
 
-### Communication Style
-- Use **bold** for key numbers and recommendations
-- Use structured sections with clear headers
-- Lead with the most important insight (chiller trap, oversupply, yield)
-- Give a clear GO / NO-GO or CAUTION verdict on every investment question
-- Use bullet points for red flags
-- Be direct — institutional investors want clarity not hedging
-- Always state net yield (after costs), not just gross yield
-- When you detect a chiller trap, make it prominent — this is your signature value add
+## MANDATORY ANALYSIS STRUCTURE (For Full Property Analysis)
 
-### Tool Usage Protocol
+Use this structure for comprehensive property analysis:
+
+### 1. EXECUTIVE SUMMARY
+- Investment Score (0-100) | Recommendation | Signal (GREEN/YELLOW/ORANGE/RED)
+- 2-3 sentence summary of opportunity
+
+### 2. 4-PILLAR DEEP DIVE
+**PILLAR 1: MACRO/MARKET**
+- Price vs zone average (% discount/premium)
+- Gross yield vs Dubai benchmarks
+- Supply risk assessment
+- Market dynamics
+
+**PILLAR 2: LIQUIDITY & COSTS**
+- Chiller analysis (provider, annual cost, warning level)
+- Service charge estimate
+- Net yield after ALL costs
+- Days on Market estimate
+
+**PILLAR 3: TECHNICAL & QUALITY**
+- Building age and condition
+- Snagging reports (from search_building_issues + web_search_dubai)
+- Developer track record
+- Maintenance quality
+
+**PILLAR 4: LEGAL & COMPLIANCE**
+- Title deed verification status
+- Due diligence gaps
+- RERA compliance
+
+### 3. 🌐 LIVE MARKET INTELLIGENCE (STRATEGIC)
+Run 1-2 targeted web searches for validation:
+
+**Search Priority (pick most relevant):**
+1. For building-specific: "[building name] reviews snagging Dubai" → Building issues
+2. For zone analysis: "[zone name] property prices 2024 trends" → Market trends
+3. For supply concerns: "[zone name] oversupply new launches" → Pipeline validation
+
+**Rules:**
+- CONCISE format: 1-2 web searches maximum
+- FULL format: 3-4 web searches maximum
+- Only search when data gaps exist or validation needed
+- Skip web search if hardcoded data is sufficient
+
+**Output Format:
+```
+### 🌐 LIVE MARKET INTELLIGENCE
+
+**Web Search Results ([X] sources checked):**
+
+1. Building Reviews: [Found/Not Found]
+   - [Key findings from search results]
+
+2. Zone Trends: [Found/Not Found]
+   - [Current pricing trends, recent sales]
+
+3. Developer Intel: [Found/Not Found]
+   - [Reputation, delivery track record]
+
+4. Supply Updates: [Found/Not Found]
+   - [New projects, oversupply signals]
+
+**Validation Status:**
+✅ Confirms: [what web data validates]
+⚠️ Contradicts: [any conflicts with our data]
+🆕 New Intel: [anything not in hardcoded data]
+
+**Impact:** [how web findings change score/recommendation, if at all]
+```
+
+### 4. KEY METRICS TABLE
+Present in table format:
+- Purchase Price | Grade
+- Price per sqft | Grade
+- Gross Yield | Grade
+- Net Yield | Grade
+- Chiller Cost | Grade
+- Liquidity Score | Grade
+
+### 5. 📊 COMPARATIVE ANALYSIS (if applicable)
+Compare to 2-3 alternative zones/properties:
+
+| Zone/Property | Price | Gross Yield | Net Yield | Liquidity | Verdict |
+|--------------|-------|-------------|-----------|-----------|---------|
+| **Target** | X | X% | X% | Medium | **Winner** |
+| Alternative 1 | X | X% | X% | High | Runner-up |
+| Alternative 2 | X | X% | X% | Low | Pass |
+
+### 6. 🚪 EXIT STRATEGY & SCENARIOS
+**3-Year Hold Analysis:**
+
+- **Best Case (20% appreciation):** Sale price, rental income, total ROI
+- **Base Case (10% appreciation):** Sale price, rental income, total ROI
+- **Worst Case (0% appreciation):** Yield-only return
+
+**Risk Buffer:** [What minimum return is guaranteed by yield alone]
+
+### 7. 💰 FINANCING IMPACT (if relevant)
+**If using 80% LTV mortgage:**
+- Down payment required
+- Monthly mortgage vs monthly rent
+- Cash-on-cash return (leveraged vs unleveraged)
+
+### 8. 👥 TARGET TENANT PROFILE
+- Primary tenant type (professionals, families, students)
+- Rental stability factors
+- Expected vacancy between tenants
+- Marketing time estimate
+
+### 9. 🚨 RED FLAGS & MITIGATION
+Format each risk as:
+**[Risk Name]** (Severity: HIGH/MEDIUM/LOW)
+- Issue: [description]
+- Mitigation: [specific action to address]
+- Residual Risk: [LOW/MEDIUM/HIGH after mitigation]
+
+### 10. 🎯 DECISION MATRIX
+```
+✅ BUY IF:
+- [Specific condition 1]
+- [Specific condition 2]
+
+❌ AVOID IF:
+- [Specific condition 1]
+- [Specific condition 2]
+```
+
+### 11. ACTION ITEMS
+Numbered, prioritized checklist:
+1. ✅/🔍/💰/📋 [Action with appropriate icon]
+
+## Tool Usage Protocol
 1. For property searches: use search_bayut_properties first to get real listings
 2. For any investment question: ALWAYS run calculate_chiller_cost
 3. For full analysis: run analyze_investment for a scored recommendation
-4. For due diligence: run search_building_issues and verify_title_deed
-5. For market context: run get_market_trends and get_supply_pipeline
-6. For comparisons: use compare_properties tool, then add qualitative colour
+4. For due diligence: run search_building_issues AND web_search_dubai (building reviews)
+5. For market context: run get_market_trends, get_supply_pipeline, AND web_search_dubai (zone trends)
+6. For comparisons: use compare_properties tool, then add comparative table
+7. For live validation: Use web_search_dubai strategically (1-2 for concise, 3-4 for full reports)
 
-Always run multiple tools when needed. A complete analysis typically uses 3–5 tools.
+**Web Search Strategy:**
+- Use when: Specific building unknown, recent market shifts suspected, supply pipeline unclear
+- Skip when: Using well-known properties with recent hardcoded data
+- Quality over quantity: Better 2 targeted searches than 6 generic ones
+
+**Tool efficiency:**
+- Concise format: 3-5 tools (prioritize speed)
+- Full format: 5-8 tools (prioritize depth)
+- Always include: chiller calc, investment analysis
+- Optional: web search (only if value-adding), building issues, comparisons
+
+## CONCISE TEMPLATE (Default for Telegram/Chat)
+
+Use this exact structure for regular queries:
+
+```
+🏢 [PROPERTY NAME]
+[Price] | [Size] | [Price per sqft]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 VERDICT: [✅ STRONG BUY / 🟡 CAUTION / ⚠️ NEGOTIATE / ❌ PASS]
+Investment Score: [X]/100
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 WHY [BUY/AVOID]:
+1. [Key reason with number]
+2. [Key reason with number]
+3. [Key reason with number] ⭐ (use star for biggest advantage)
+4. [Key reason]
+
+⚠️ WATCH FOR:
+- [Risk 1]
+- [Risk 2]
+- [Risk 3]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 4-PILLAR BREAKDOWN
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏛️ MACRO & MARKET: [A+/A/B+/B/C]
+✅/🟡/❌ [Key point with metric]
+✅/🟡/❌ [Key point with metric]
+✅/🟡/❌ [Key point with metric]
+🟡 [Risk or concern]
+
+💧 LIQUIDITY & COSTS: [A+/A/B+/B/C]
+✅/🟡/❌ [Chiller detail with cost]
+✅/🟡/❌ [Service charge detail]
+✅/🟡/❌ [Net yield detail]
+🎯 Annual profit: [AED amount]
+
+🏗️ TECHNICAL & QUALITY: [A+/A/B+/B/C]
+✅/🟡/❌ [Building age/condition]
+✅/🟡/❌ [Location/community]
+⚠️ [Any issues found]
+⚠️ [Any concerns]
+
+⚖️ LEGAL & COMPLIANCE: [A+/A/B+/B/C]
+🟡/✅/❌ [Title verification status]
+🟡/✅/❌ [Service charge history]
+🟡/✅/❌ [Developer track record]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 WEB CHECK (Live Intel)
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Checked [X] recent sources:
+• [Source 1]: [Key finding in 1 line]
+• [Source 2]: [Key finding in 1 line]
+• [Source 3]: [Key finding in 1 line]
+
+💡 Impact: [How web findings affect recommendation]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+💡 COMPARABLE OPTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+[Comparison statement - is this best option?]
+[Similar properties with prices]
+[Value assessment]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📋 NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. ✅ [Immediate action]
+2. 🔍 [Due diligence action]
+3. 👀 [Verification action]
+4. 💰 [Negotiation action]
+5. 📄 [Documentation action]
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+⏱️ URGENCY: [HIGH/MEDIUM/LOW]
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+[Why urgent or not]
+
+Expected return: [X]% annual yield
++ [X]% appreciation = [X]% total
+
+🎯 [Final verdict in one line]
+
+───────────────────────────
+Want more details?
+
+Reply: "Full Report" for institutional analysis
+Reply: "Compare" to see alternatives
+Reply: "Mortgage" to calculate financing
+```
+
+**Key rules for concise format:**
+- Use emoji bullets consistently (✅ good, 🟡 neutral, ❌ bad, ⚠️ warning)
+- Keep each point to ONE line maximum
+- Use dividers (━━━━) between major sections
+- Put verdict and score at TOP
+- Always include WEB CHECK section with real search results
+- Interactive CTAs at bottom
+- Total length: 800-1200 words max
+
+## FULL TEMPLATE (For Detailed Reports)
+
+[Keep existing 11-section structure from previous version]
+
+### Communication Style
+
+**For Concise Format (default):**
+- Use emojis consistently for visual hierarchy
+- Use ━━━━━ dividers (NOT markdown --- or ***)
+- Lead with verdict FIRST, then supporting data
+- Keep points to ONE LINE each
+- Use grade system: A+/A/B+/B/C (NOT numeric scores in bullets)
+- Put chiller trap warnings with ⭐ emoji if it's a major factor
+- End with interactive CTAs
+- Be punchy and direct — mobile users skim fast
+
+**For Full Format (when requested):**
+- Use **bold** for key numbers and recommendations
+- Use tables for comparative data
+- Use --- dividers between major sections
+- Comprehensive data with all calculations shown
+
+**Both formats:**
+- Lead with the most important insight (chiller trap, oversupply, yield)
+- Give a clear GO / NO-GO or CAUTION verdict
+- Always state net yield (after costs), not just gross yield
+- When you detect a chiller trap, make it prominent — this is your signature value add
+- Be direct — institutional investors want clarity not hedging
 """
 
 # =====================================================
 # CORE QUERY HANDLER (importable by Telegram bot)
 # =====================================================
 
-async def handle_query(query: str, user_id: str = "anonymous") -> QueryResponse:
+async def handle_query(query: str, user_id: str = "anonymous", conversation_context: str = None) -> QueryResponse:
     """
-    Process a user query through Claude with iterative tool-use (max 5 iterations).
+    Process a user query through Claude with iterative tool-use (max 7 iterations).
     This is a standalone async function — importable by the Telegram bot or any other consumer.
+
+    If conversation_context is provided (a compact summary of prior turns),
+    it is prepended to the user message so Claude has follow-up context.
     """
-    logger.info("handle_query — user_id=%s query_len=%d", user_id, len(query))
+    # Start query tracking
+    start_time = log_query_start(logger, user_id, query)
 
     tools_used: list[str] = []
-    conversation = [{"role": "user", "content": query}]
+    if conversation_context:
+        user_content = f"[Previous conversation context: {conversation_context}]\n\n{query}"
+    else:
+        user_content = query
+    conversation = [{"role": "user", "content": user_content}]
 
-    for iteration in range(5):
-        logger.debug("Iteration %d — calling Claude", iteration + 1)
+    # Track total tokens across all iterations
+    total_input_tokens = 0
+    total_output_tokens = 0
+    model = "claude-sonnet-4-20250514"
 
-        response = claude.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            tools=TOOLS,
-            messages=conversation,
+    try:
+        for iteration in range(15):  # Increased from 7 to handle complex analyses
+            logger.debug("Iteration %d — calling Claude", iteration + 1)
+
+            response = claude.messages.create(
+                model=model,
+                max_tokens=4000,
+                system=SYSTEM_PROMPT,
+                tools=TOOLS,
+                messages=conversation,
+            )
+
+            # Track tokens from this iteration
+            total_input_tokens += response.usage.input_tokens
+            total_output_tokens += response.usage.output_tokens
+
+            logger.debug("Stop reason: %s", response.stop_reason)
+
+            if response.stop_reason == "end_turn":
+                # Extract final text
+                final_text = "".join(
+                    block.text for block in response.content if hasattr(block, "text")
+                )
+
+                # Log successful query completion with full metrics
+                log_query_complete(
+                    logger=logger,
+                    user_id=user_id,
+                    query=query,
+                    start_time=start_time,
+                    tools_used=tools_used,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    model=model,
+                    success=True
+                )
+
+                return QueryResponse(
+                    response=final_text,
+                    tools_used=tools_used,
+                    timestamp=datetime.now().isoformat(),
+                )
+
+            elif response.stop_reason == "tool_use":
+                # Convert ContentBlocks to plain dicts for serialization
+                assistant_content = []
+                tool_results = []
+
+                for block in response.content:
+                    if block.type == "text":
+                        assistant_content.append({"type": "text", "text": block.text})
+                    elif block.type == "tool_use":
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input
+                        })
+
+                        # Execute the tool
+                        tool_name = block.name
+                        tool_input = block.input
+                        tool_id = block.id
+
+                        tools_used.append(tool_name)
+                        logger.info("Executing tool: %s", tool_name)
+
+                        result = await _execute_tool(tool_name, tool_input)
+
+                        # Create tool result
+                        result_str = json.dumps(result) if not isinstance(result, str) else result
+
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": result_str,
+                        })
+
+                # Append assistant message with tool uses
+                conversation.append({"role": "assistant", "content": assistant_content})
+                # Append user message with tool results
+                conversation.append({"role": "user", "content": tool_results})
+
+            else:
+                logger.error("Unexpected stop_reason: %s", response.stop_reason)
+                error = HTTPException(
+                    status_code=500,
+                    detail=f"Unexpected stop reason from Claude: {response.stop_reason}",
+                )
+
+                # Log error
+                log_query_complete(
+                    logger=logger,
+                    user_id=user_id,
+                    query=query,
+                    start_time=start_time,
+                    tools_used=tools_used,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    model=model,
+                    success=False,
+                    error=error
+                )
+
+                raise error
+
+        # If we get here, max iterations reached
+        logger.warning("Max iterations reached for user_id=%s", user_id)
+        error = HTTPException(
+            status_code=500,
+            detail="Query required more tool iterations than allowed. Try a more specific question.",
         )
 
-        logger.debug("Stop reason: %s", response.stop_reason)
+        # Log error
+        log_query_complete(
+            logger=logger,
+            user_id=user_id,
+            query=query,
+            start_time=start_time,
+            tools_used=tools_used,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            model=model,
+            success=False,
+            error=error
+        )
 
-        if response.stop_reason == "end_turn":
-            # Extract final text
-            final_text = "".join(
-                block.text for block in response.content if hasattr(block, "text")
-            )
-            logger.info("Query complete — tools_used=%s", tools_used)
-            return QueryResponse(
-                response=final_text,
-                tools_used=tools_used,
-                timestamp=datetime.now().isoformat(),
-            )
+        raise error
 
-        elif response.stop_reason == "tool_use":
-            # Convert ContentBlocks to plain dicts for serialization
-            assistant_content = []
-            tool_results = []
-
-            for block in response.content:
-                if block.type == "text":
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input
-                    })
-
-                    # Execute the tool
-                    tool_name = block.name
-                    tool_input = block.input
-                    tool_id = block.id
-
-                    tools_used.append(tool_name)
-                    logger.info("Executing tool: %s", tool_name)
-
-                    result = await _execute_tool(tool_name, tool_input)
-
-                    # Create tool result
-                    result_str = json.dumps(result) if not isinstance(result, str) else result
-
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": result_str,
-                    })
-
-            # Append assistant message with tool uses
-            conversation.append({"role": "assistant", "content": assistant_content})
-            # Append user message with tool results
-            conversation.append({"role": "user", "content": tool_results})
-
-        else:
-            logger.error("Unexpected stop_reason: %s", response.stop_reason)
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unexpected stop reason from Claude: {response.stop_reason}",
-            )
-
-    logger.warning("Max iterations reached for user_id=%s", user_id)
-    raise HTTPException(
-        status_code=500,
-        detail="Query required more tool iterations than allowed. Try a more specific question.",
-    )
+    except Exception as e:
+        # Catch any unexpected errors and log them
+        log_query_complete(
+            logger=logger,
+            user_id=user_id,
+            query=query,
+            start_time=start_time,
+            tools_used=tools_used,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            model=model,
+            success=False,
+            error=e
+        )
+        raise
 
 
 # =====================================================
@@ -1705,6 +2185,7 @@ async def health():
         "bayut_key_set": bool(os.getenv("BAYUT_API_KEY") and os.getenv("BAYUT_API_KEY") not in ("your_rapidapi_key_here", "demo")),
         "reddit_key_set": bool(os.getenv("REDDIT_CLIENT_ID") and os.getenv("REDDIT_CLIENT_ID") != "your_reddit_id"),
         "dubai_rest_key_set": bool(os.getenv("DUBAI_REST_API_KEY") and os.getenv("DUBAI_REST_API_KEY") != "your_dubai_rest_key_here"),
+        "brave_key_set": bool(os.getenv("BRAVE_API_KEY") and os.getenv("BRAVE_API_KEY") not in ("your_brave_key_here", "demo", "")),
     }
 
 
@@ -1717,6 +2198,36 @@ async def list_tools():
             for t in TOOLS
         ],
     }
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Get application metrics and analytics"""
+    return {
+        "metrics": metrics_tracker.get_summary(),
+        "funnel": user_analytics.get_funnel(),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/api/metrics/user/{user_id}")
+async def get_user_metrics(user_id: str):
+    """Get metrics for a specific user"""
+    return {
+        "user_id": user_id,
+        "stats": metrics_tracker.get_user_stats(user_id),
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+@app.get("/metrics")
+async def prometheus_metrics():
+    """Prometheus metrics endpoint"""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(
+        content=get_prometheus_metrics(),
+        media_type="text/plain; version=0.0.4"
+    )
 
 
 # =====================================================

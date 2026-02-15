@@ -1,0 +1,436 @@
+{
+  "title": "🤖 AI & Cost Analytics",
+  "tags": [
+    "dubai-estate-ai",
+    "ai",
+    "cost",
+    "claude"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "💰 Total Cost (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_query_cost_usd_sum[24h]))",
+          "legendFormat": "Cost",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 10,
+                "color": "yellow"
+              },
+              {
+                "value": 50,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "📊 Avg Cost per Query",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_query_cost_usd_sum[24h])) / sum(increase(dubai_estate_query_cost_usd_count[24h]))",
+          "legendFormat": "Avg Cost",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "🔢 Total Tokens (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_tokens_total[24h]))",
+          "legendFormat": "Tokens",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "💸 Projected Monthly Cost",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_query_cost_usd_sum[24h])) * 30",
+          "legendFormat": "Monthly",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 300,
+                "color": "yellow"
+              },
+              {
+                "value": 1000,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "💵 Cost Over Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(dubai_estate_query_cost_usd_sum[5m])) * 3600",
+          "legendFormat": "Cost per hour (USD)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "🔢 Token Usage Over Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum by(type) (rate(dubai_estate_tokens_total[5m])) * 60",
+          "legendFormat": "{{type}} tokens/min",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "💰 Cost by Model",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum by(model) (increase(dubai_estate_query_cost_usd_sum[24h]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "🔢 Token Usage by Model",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum by(model, type) (increase(dubai_estate_tokens_total[24h]))",
+          "legendFormat": "{{model}} - {{type}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "📊 Cost per Query Over Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "rate(dubai_estate_query_cost_usd_sum[5m]) / rate(dubai_estate_query_cost_usd_count[5m])",
+          "legendFormat": "Avg cost per query",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "gauge",
+      "title": "💸 Cost Efficiency (Queries per Dollar)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_queries_total[24h])) / sum(increase(dubai_estate_query_cost_usd_sum[24h]))",
+          "legendFormat": "Queries/$",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 20,
+                "color": "yellow"
+              },
+              {
+                "value": 50,
+                "color": "green"
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "💰 Most Expensive Queries (by tool combination)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "expr": "topk(10, avg by(tool_name) (rate(dubai_estate_query_cost_usd_sum[1h])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "tool_name": "Tool",
+              "Value": "Avg Cost (USD)"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Avg Cost (USD)",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Avg Cost (USD)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

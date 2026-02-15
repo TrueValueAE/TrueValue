@@ -1,16 +1,18 @@
 # 🏢 Dubai Estate AI - Project Context
 
+**Updated: February 15, 2026**
+
 **Give this file to Claude Code so it understands your business domain**
 
 ---
 
 ## 🎯 What We're Building
 
-An AI-powered **institutional-grade real estate analysis platform** for Dubai, delivered via Telegram bot.
+An AI-powered **institutional-grade real estate analysis platform** for Dubai, delivered via Telegram bot with live web search validation and dual-format analysis system.
 
-**Target Users:** Real estate agents in Dubai
+**Target Users:** Real estate agents and property investors in Dubai
 
-**Core Value Prop:** Saves agents and buyers from expensive mistakes by analyzing hidden costs and building issues that traditional platforms miss.
+**Core Value Prop:** Saves agents and buyers from expensive mistakes by analyzing hidden costs, building issues, and market conditions that traditional platforms miss — validated with real-time web data.
 
 ---
 
@@ -41,32 +43,53 @@ When someone wants to buy property in Dubai:
 
 ---
 
-### **Our Solution (AI-Powered Due Diligence)**
+### **Our Solution (AI-Powered Due Diligence with Live Validation)**
 
 Agent asks bot:
 ```
-"Validate: Marina Gate 1, Unit 2506, AED 2.5M"
+"Analyze Marina Gate 1 studio, AED 650K"
 ```
 
-Bot responds in 30 seconds:
+Bot responds in ~60 seconds:
 ```
-⛔ DO NOT BUY
+🏢 MARINA GATE 1 STUDIO
+AED 650K | 500 sqft | AED 1,300/sqft
 
-Red Flags:
-1. Overpriced by 6.4% (AED 150K)
-2. Chiller trap: Fixed Empower charges (AED 22.5K/year)
-3. Building issues: 8 snagging reports (water damage)
-4. Poor ROI: 1.08% net yield
+━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 VERDICT: ✅ STRONG BUY
+Investment Score: 78/100
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-Better Option:
-Princess Tower #4509 - AED 2.6M
-- Better value despite 4% premium
-- 47% lower chiller costs
-- No major building issues
-- 4.2% net yield (4x better)
+💰 WHY BUY:
+1. 7.35% net yield ⭐
+2. Lootah chiller (saves AED 15K/year vs Empower)
+3. 4% below market average
+4. Established rental demand
+
+⚠️ WATCH FOR:
+- Limited liquidity (60-90 days to sell)
+- Title deed verification needed
+- Request building maintenance history
+
+🌐 WEB CHECK (Live Intel)
+━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Checked 2 recent sources:
+• Market trends: Studio demand up 25% YoY
+• Supply check: No major competing projects in area
+
+💡 Impact: Validates strong yield opportunity
 ```
 
-**Result:** Saved from AED 500K mistake, found better property
+**Then interactive buttons appear:**
+```
+┌─────────────────┬──────────────────┐
+│ 📊 Full Report  │ 📈 Compare       │
+├─────────────────┼──────────────────┤
+│ 💰 Mortgage     │ 🔍 Web Search    │
+└─────────────────┴──────────────────┘
+```
+
+**Result:** Fast, actionable analysis with on-demand depth
 
 ---
 
@@ -89,19 +112,86 @@ Property: 1500 sqft, Empower chiller
 - Hidden cost: AED 16.5K/year
 - 10-year impact: AED 165K lost ROI
 
-With our tool: Flagged immediately as "Chiller Trap"
+With our tool: Flagged immediately as "Chiller Trap" ⭐
 ```
 
-**Data Source:** Scrape Empower/Lootah websites for rates
-
-**Why Competitors Don't:**
-- Bayut/Property Finder don't have this data
-- Agents don't know to check
-- Chiller providers don't advertise the trap
+**Data Source:** Pure math calculation (no API needed - built into our tool)
 
 ---
 
-### **2. Social Intelligence (Snagging Reports)** ⭐⭐
+### **2. Live Web Search Validation** ⭐⭐⭐ (NEW - Feb 2026)
+
+**Why It Matters:**
+- Hardcoded data goes stale
+- Market conditions change daily
+- Building issues emerge over time
+- Competing supply appears
+
+**What We Search:**
+1. **Building-specific:** "[building name] reviews snagging Dubai"
+2. **Market trends:** "[zone] property prices 2024 2025 trends"
+3. **Supply validation:** "[zone] new launches oversupply"
+
+**Example:**
+```
+Query: "Arjan studio market analysis"
+
+Web Search finds:
+• Studios now 25% of transactions (up from 22%)
+• New Arthouse Hills project (Q4 2028) - future competition
+• Yield premiums holding in outer zones
+
+Impact: Validates investment thesis + identifies future risk
+```
+
+**Technology:** Brave Search API (fast, privacy-focused, no rate limits)
+
+**Why Competitors Don't:**
+- Requires AI to synthesize web results with structured data
+- Integration complexity
+- API costs
+
+---
+
+### **3. Dual-Format Analysis System** ⭐⭐ (NEW - Feb 2026)
+
+**Why It Matters:**
+- Users want different depth at different times
+- Mobile users need speed first, depth later
+- Progressive disclosure = better UX
+
+**Two Formats:**
+
+**Concise (Default - 1 minute response):**
+```
+🏢 Property Name
+━━━━━━━━━━━━━━
+🎯 VERDICT: ✅ STRONG BUY
+Score: 78/100
+
+💰 WHY BUY: [3-4 key points]
+⚠️ WATCH FOR: [3 risks]
+📊 4-PILLAR BREAKDOWN: [grades A/B/C]
+🌐 WEB CHECK: [validated findings]
+```
+
+**Full Report (On-demand - 2 minutes):**
+- 11-section institutional analysis
+- Tables, comparisons, scenarios
+- Exit strategy modeling
+- Financing impact
+- Complete due diligence
+
+**Trigger:** Click "📊 Full Report" button
+
+**Why Competitors Don't:**
+- Most tools are one-size-fits-all
+- No interactive depth control
+- Either too simple OR too complex
+
+---
+
+### **4. Social Intelligence (Snagging Reports)** ⭐⭐
 
 **Why It Matters:**
 - New buildings often have defects (snagging)
@@ -114,60 +204,37 @@ With our tool: Flagged immediately as "Chiller Trap"
 Building: Marina Gate 1
 Reddit mentions (r/dubai):
 - "Water leakage in bedroom" (3 posts)
-- "Elevator broken again" (2 posts)  
+- "Elevator broken again" (2 posts)
 - "AC not working properly" (3 posts)
-
-Google Maps: 3.8★ (78 reviews)
-- "Nice but maintenance issues"
-- "Avoid if you can"
 
 Our analysis: 62/100 quality score (MEDIUM concern)
 ```
 
 **Data Source:**
-- Reddit API (free)
-- Facebook Graph API (requires approval)
-- Google Maps scraping (free)
-
-**Why Competitors Don't:**
-- Requires NLP to analyze social data
-- Manual work to aggregate
-- Legal grey area (scraping)
+- Reddit API (free) + PRAW library
+- Web search for recent mentions
+- Aggregated mock data (fallback)
 
 ---
 
-### **3. Institutional-Grade Analysis** ⭐⭐
+### **5. Interactive UX with Progress Indicators** ⭐⭐ (NEW - Feb 2026)
 
 **Why It Matters:**
-- Consumers/agents get analysis usually reserved for big investors
-- 4-pillar framework is professional
-- Builds trust and credibility
+- 60-second analysis feels like forever with no feedback
+- Users abandon if they think it's broken
+- Buttons enable progressive disclosure
 
-**The 4 Pillars:**
+**User Flow:**
+1. User sends query
+2. **Instant:** "🔍 Analyzing... ⏱️ This will take 30-60 seconds"
+3. Bot runs analysis (user knows it's working)
+4. **60 seconds:** Concise response appears with 4 action buttons
+5. User clicks button for deeper analysis
 
-1. **Macro & Market**
-   - Supply pipeline (oversupply risk)
-   - Interest rate sensitivity
-   - Zone momentum
-   - Oil price correlation
-
-2. **Liquidity & Exit**
-   - Days on market (can you sell?)
-   - Transaction volume trends
-   - Cash vs mortgage ratios
-   - Resale velocity
-
-3. **Technical & Engineering**
-   - Chiller costs ⭐
-   - Building quality (snagging)
-   - Maintenance reserves
-   - MEP systems
-
-4. **Legal & Regulatory**
-   - Title deed verification
-   - Service charges
-   - Rental disputes
-   - Compliance issues
+**Why Competitors Don't:**
+- Most bots send one message and wait
+- No progress indicators
+- No interactive follow-ups
 
 ---
 
@@ -185,8 +252,8 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 3. **Business Bay** - Business district, CAUTION: oversupply risk 2026
 4. **JBR (Jumeirah Beach Residence)** - Beachfront, very liquid
 5. **Palm Jumeirah** - Ultra-luxury, low supply
-6. **Arabian Ranches** - Villas, family-oriented
-7. **JVC (Jumeirah Village Circle)** - Affordable, good yields
+6. **Arjan** - Mid-market, family-oriented, high yields
+7. **JVC (Jumeirah Village Circle)** - Affordable, yield trap warning
 8. **International City** - Budget, high yields, lower quality
 
 ### **Typical Prices (2024-2025)**
@@ -200,6 +267,7 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 - Gross: 5-8% (good)
 - Net: 3-5% (after costs)
 - **With chiller trap: 1-2% (bad)**
+- **Outer zones (Arjan): 7-9% gross, 5-7% net**
 
 ---
 
@@ -217,59 +285,25 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 - Loses deals to agents with better insights
 
 **What He Needs:**
-- Quick property analysis (< 1 min)
-- Professional reports to share with clients
-- Unique insights (chiller costs!)
-- Mobile-friendly (Telegram preferred)
+- Quick property analysis (< 1 min) ✅
+- Professional reports to share with clients ✅
+- Unique insights (chiller costs!) ✅
+- Mobile-friendly (Telegram preferred) ✅
+- Live market validation ✅ NEW
 
 **Willingness to Pay:** AED 299/month if it helps close 1 extra deal
 
 ---
 
-### **Secondary: Property Buyer (Investor)**
-
-**Name:** Sarah, 38, British, Dubai expat
-**Situation:** Buying first investment property
-**Budget:** AED 1-2M
-**Goal:** Rental income + appreciation
-**Pain Points:**
-- Overwhelmed by options
-- Doesn't know what questions to ask
-- Afraid of hidden costs
-- No local knowledge
-
-**What She Needs:**
-- Simple GO/NO-GO recommendations
-- Explanation of risks
-- Comparison of options
-- Trust in the analysis
-
-**Willingness to Pay:** AED 99/month during search period
-
----
-
-### **Tertiary: Real Estate Agency (Team)**
-
-**Name:** Premium Properties LLC
-**Size:** 15 agents
-**Revenue:** AED 5M/year
-**Pain Points:**
-- Need consistent analysis across team
-- Want to offer premium service
-- Agents have varying expertise levels
-- Manual research is time-consuming
-
-**What They Need:**
-- White-label reports (their branding)
-- API access for CRM integration
-- Unlimited usage for team
-- Priority support
-
-**Willingness to Pay:** AED 1,999/month for 15-agent license
-
----
-
 ## 🏗️ Technical Architecture Context
+
+### **Stack**
+- **Backend:** FastAPI (async, fast, type-safe)
+- **AI:** Claude Sonnet 4 (tool use, long context)
+- **Search:** Brave Search API (live web validation)
+- **Bot:** python-telegram-bot (async, reliable)
+- **Observability:** Prometheus + Grafana + Loki
+- **Deployment:** Local (can deploy to Heroku/Railway)
 
 ### **Why FastAPI?**
 - Fast (async support)
@@ -284,117 +318,224 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 - No app store approval needed
 - Works on all devices
 - Free to use
+- Interactive buttons support
 
 ### **Why Claude API?**
 - Best at following instructions
 - Tool use (function calling)
-- Long context window
+- Long context window (handles full analysis)
 - Can understand real estate nuances
-- Reliable
+- Reliable and fast
 
-### **Why One File (main.py)?**
-- Faster to build
-- Easier to deploy
-- Simpler to debug
-- Can refactor later
-- No over-engineering
+### **Why Brave Search API?**
+- Fast responses (<5s)
+- Privacy-focused (no tracking)
+- Good coverage of global + regional content
+- Simple API (no complex auth)
+- Reasonable pricing
 
 ---
 
 ## 📐 Core Business Logic
 
-### **Investment Score Formula**
+### **Investment Score Formula (4-Pillar Framework)**
 
 ```python
 def calculate_investment_score(property, analysis):
-    score = 50  # Start at neutral
-    
-    # Price score (30 points)
-    if property.price < analysis.fair_value * 0.95:
-        score += 30  # Great deal
-    elif property.price < analysis.fair_value * 1.05:
-        score += 15  # Fair price
+    total_score = 0
+
+    # PILLAR 1: Price Score (30 points)
+    price_ratio = property.price_per_sqft / zone_average_sqft
+    if price_ratio <= 0.85:
+        total_score += 30  # Deep value
+    elif price_ratio <= 0.95:
+        total_score += 25
+    elif price_ratio <= 1.05:
+        total_score += 20
+    elif price_ratio <= 1.15:
+        total_score += 12
     else:
-        score += 0   # Overpriced
-    
-    # Yield score (25 points)
-    if analysis.net_yield > 6:
-        score += 25  # Excellent
-    elif analysis.net_yield > 4:
-        score += 15  # Good
-    elif analysis.net_yield > 3:
-        score += 5   # Acceptable
+        total_score += 5   # Overpriced
+
+    # PILLAR 2: Yield Score (25 points)
+    if analysis.gross_yield >= 8.0:
+        total_score += 25
+    elif analysis.gross_yield >= 7.0:
+        total_score += 22
+    elif analysis.gross_yield >= 6.0:
+        total_score += 18
+    elif analysis.gross_yield >= 5.0:
+        total_score += 12
     else:
-        score += 0   # Poor
-    
-    # Liquidity score (20 points)
-    if analysis.dom < 30:
-        score += 20  # Very liquid
-    elif analysis.dom < 60:
-        score += 10  # Moderate
+        total_score += 5
+
+    # PILLAR 3: Liquidity Score (20 points)
+    liquidity_map = {
+        "downtown-dubai": 20,
+        "dubai-marina": 18,
+        "palm-jumeirah": 17,
+        "jumeirah-beach-residence": 16,
+        "business-bay": 13,
+        "arjan": 10,
+        "jumeirah-village-circle": 8,
+    }
+    total_score += liquidity_map.get(zone, 12)
+
+    # PILLAR 4: Quality/Supply Risk Score (15 points)
+    supply_risk = get_supply_risk(zone)
+    quality_map = {"LOW": 15, "MODERATE": 11, "HIGH": 6, "VERY HIGH": 2}
+    total_score += quality_map.get(supply_risk, 8)
+
+    # PILLAR 5: Chiller Score (10 points)
+    if analysis.chiller_warning == "LOW":
+        total_score += 10
+    elif analysis.chiller_warning == "MEDIUM":
+        total_score += 6
     else:
-        score += 0   # Slow
-    
-    # Quality score (15 points)
-    if analysis.building_issues < 3:
-        score += 15  # Excellent quality
-    elif analysis.building_issues < 7:
-        score += 7   # Acceptable
-    else:
-        score += 0   # Concerning
-    
-    # Chiller score (10 points)
-    if analysis.chiller_cost_per_sqft < 10:
-        score += 10  # Good
-    elif analysis.chiller_cost_per_sqft < 15:
-        score += 5   # Acceptable
-    else:
-        score += 0   # Trap!
-    
-    return min(100, score)
+        total_score += 2
+
+    # Chiller trap penalty
+    if analysis.chiller_trap_detected:
+        total_score = max(0, total_score - 2)
+
+    return min(100, total_score)
 ```
 
 ### **Decision Matrix**
 
 ```
 Score 80-100: ✅ STRONG BUY
-Score 60-79:  ✅ GOOD BUY  
-Score 40-59:  ⚠️ PROCEED WITH CAUTION
-Score 20-39:  ⚠️ NEGOTIATE HARD
-Score 0-19:   ⛔ DO NOT BUY
+Score 60-79:  ✅ GOOD BUY
+Score 40-59:  🟡 CAUTION
+Score 20-39:  ⚠️ NEGOTIATE
+Score 0-19:   ❌ DO NOT BUY
 ```
+
+---
+
+## 📱 Communication Style
+
+### **For Concise Format (Default)**
+
+**DO:**
+- Use emojis for visual hierarchy (🏢 💰 ✅ 🟡 ⚠️ ❌)
+- Use ━━━━━ dividers between sections
+- Lead with verdict FIRST
+- Keep each point to ONE LINE
+- Use grade system (A+/A/B+/B/C)
+- Put chiller trap warnings with ⭐ emoji
+- End with interactive CTAs
+
+**DON'T:**
+- Write paragraphs
+- Use markdown --- dividers (use ━━━━━)
+- Bury the conclusion
+- Include tables (save for full format)
+
+**Example GOOD Concise Response:**
+```
+🏢 MARINA GATE 1 STUDIO
+AED 650K | 500 sqft | AED 1,300/sqft
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 VERDICT: ✅ STRONG BUY
+Investment Score: 78/100
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 WHY BUY:
+1. 7.35% net yield ⭐
+2. Lootah chiller (saves AED 15K/year)
+3. 4% below market
+4. Strong rental demand
+
+⚠️ WATCH FOR:
+- Verify title deed
+- 60-90 day sell time
+- Request maintenance history
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+📊 4-PILLAR BREAKDOWN
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏛️ MACRO & MARKET: B+
+✅ 4% below zone average
+✅ 7.35% gross yield
+🟡 Moderate supply risk
+
+💧 LIQUIDITY & COSTS: A
+✅ Lootah = AED 28/year only
+✅ Net yield: 7.35%
+🎯 Annual profit: AED 47,772
+
+🏗️ TECHNICAL & QUALITY: B
+✅ Established community
+⚠️ Limited snagging data
+
+⚖️ LEGAL & COMPLIANCE: B
+🟡 Title verification needed
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 WEB CHECK (Live Intel)
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Checked 2 recent sources:
+• Market: Studios up 25% in transactions
+• Supply: No major competing projects
+
+💡 Impact: Validates yield opportunity
+```
+
+### **For Full Format (On-Demand)**
+
+**Structure:**
+1. Executive Summary
+2. 4-Pillar Deep Dive
+3. Live Market Intelligence (web search)
+4. Key Metrics Table
+5. Comparative Analysis
+6. Exit Strategy & Scenarios
+7. Financing Impact
+8. Target Tenant Profile
+9. Red Flags & Mitigation
+10. Decision Matrix
+11. Action Items
 
 ---
 
 ## 🎯 Success Metrics
 
 ### **Technical Metrics**
-- Response time: < 30 seconds
-- Accuracy: 85%+ confidence
+- Response time: < 60 seconds ✅
+- Concise format: 30-60s ✅
+- Full format: 1-2 minutes ✅
+- Accuracy: 85%+ confidence ✅
 - Uptime: 99%+
-- API cost: < AED 100/1000 queries
+- API cost: < AED 0.10/query ✅
+
+### **UX Metrics (NEW - Feb 2026)**
+- Progress indicator shown: 100% ✅
+- Button click-through rate: Target >40%
+- Full report requests: Target 20-30% of queries
+- User satisfaction: Target NPS >60
 
 ### **Business Metrics**
 - User retention: > 60%
 - NPS score: > 50
 - Conversion (free to paid): > 10%
 - Churn: < 5%/month
-
-### **Quality Metrics**
-- Agent feedback: "Saved me from bad deal"
-- User reports: "Recommendations accurate"
-- Testimonials: "Better than my own research"
+- Time saved per analysis: ~30 minutes vs manual
 
 ---
 
 ## 🚨 Red Flags (What to Always Flag)
 
 ### **CRITICAL (Must Warn)**
-1. Chiller cost > AED 15/sqft/year
+1. Chiller cost > AED 15/sqft/year ⭐
 2. Overpriced > 10%
 3. Net yield < 2%
 4. 10+ snagging reports
 5. Supply ratio > 2.0 (oversupply)
+6. Title deed issues
 
 ### **WARNING (Mention but Not Dealbreaker)**
 1. Chiller cost AED 10-15/sqft
@@ -409,12 +550,14 @@ Score 0-19:   ⛔ DO NOT BUY
 
 ### **Chiller Providers in Dubai**
 - **Empower** (covers Marina, JBR, Business Bay)
-  - BAD: Fixed capacity charges
+  - BAD: Fixed capacity charges (AED 85/TR/month)
   - Typical: AED 15-20/sqft/year
-  
-- **Lootah** (covers some Marina areas)
+  - **Chiller Trap: YES** ⚠️
+
+- **Lootah** (covers some zones)
   - GOOD: Variable charges only
   - Typical: AED 8-12/sqft/year
+  - **Chiller Trap: NO** ✅
 
 - **Dubai Central** (less common)
 - **Palm District Cooling** (Palm Jumeirah)
@@ -423,6 +566,7 @@ Score 0-19:   ⛔ DO NOT BUY
 - Apartment: AED 8-15/sqft/year
 - Villa: AED 5-10/sqft/year
 - High-end: AED 15-25/sqft/year
+- **RERA Cap:** Max AED 25/sqft for most buildings
 
 ### **Transaction Costs**
 - **Buyer pays:**
@@ -435,56 +579,19 @@ Score 0-19:   ⛔ DO NOT BUY
   - Agent fee: 2% of price
   - No capital gains tax (yet)
 
-### **Rental Market**
-- Most leases: 12 months
-- Payment: 1-4 cheques (more cheques = better for landlord)
-- Agent fee: 5% of annual rent (tenant pays)
-- Deposit: Usually 5-10% of annual rent
-
 ---
 
-## 📱 Communication Style
+## ✅ Quality Standards
 
-### **For Telegram Responses**
-
-**DO:**
-- Use emojis for visual scanning (🏢 💰 ✅ ⚠️ ❌)
-- Bold key numbers
-- Keep sentences short
-- Use bullet points
-- Highlight red flags clearly
-- End with clear recommendation
-
-**DON'T:**
-- Write paragraphs
-- Use jargon without explanation
-- Be vague ("might be a risk")
-- Overwhelm with data
-- Bury the conclusion
-
-**Example GOOD Response:**
-```
-🏢 Marina Gate 1 #2506
-
-💰 PRICE: AED 2.5M (6.4% OVERPRICED ❌)
-📏 1,500 sqft | 🛏️ 2BR
-
-⚠️ RED FLAGS:
-1. Chiller trap: AED 22.5K/year
-2. Building issues: 8 reports
-3. Poor yield: 1.08% net
-
-🎯 VERDICT: ⛔ DO NOT BUY
-
-💡 BETTER OPTION:
-Princess Tower #4509
-AED 2.6M, 4.2% yield, no issues
-```
-
-**Example BAD Response:**
-```
-After analyzing the property located in Marina Gate 1, specifically unit number 2506, we have conducted a comprehensive evaluation across multiple dimensions including market dynamics, liquidity metrics, technical specifications, and regulatory compliance. The findings indicate several areas of concern that warrant careful consideration before proceeding with this investment opportunity. [continues for 3 paragraphs...]
-```
+Every analysis must:
+- [ ] Include all 4 pillars
+- [ ] Flag chiller costs if >AED 10/sqft ⭐
+- [ ] Run 1-2 web searches for validation (concise) or 3-4 (full)
+- [ ] Give clear GO/NO-GO verdict
+- [ ] Complete in <60 seconds (concise) or <2 min (full)
+- [ ] Show progress indicator
+- [ ] Include interactive buttons
+- [ ] Be actionable (what to do next)
 
 ---
 
@@ -496,28 +603,18 @@ When working with Claude Code, reference this file:
 "Read CONTEXT.md to understand the Dubai real estate domain.
 
 Key points:
-- Chiller costs are critical (our moat!)
+- Chiller costs are critical (our moat!) ⭐
 - Target users are agents (fast, mobile-first)
-- Responses should be concise and actionable
-- Red flags must be obvious
-- We're replacing manual research with AI
+- Use concise emoji format by default
+- Web search validates findings (1-2 searches)
+- Progress indicators prevent abandonment
+- Interactive buttons enable depth on-demand
+- Responses should be actionable
 
 Build everything with this context in mind."
 ```
 
 ---
 
-## ✅ Quality Standards
-
-Every analysis must:
-- [ ] Include all 4 pillars
-- [ ] Flag chiller costs if >AED 10/sqft
-- [ ] Show comparable properties
-- [ ] Give clear GO/NO-GO
-- [ ] Complete in <30 seconds
-- [ ] Be accurate (>85% confidence)
-- [ ] Be actionable (what to do next)
-
----
-
-**This context ensures Claude Code builds exactly what your business needs!** 🚀
+**Last Updated:** February 15, 2026
+**Status:** Production-ready with live web search and dual-format system ✅

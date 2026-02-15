@@ -1,0 +1,482 @@
+{
+  "title": "👥 User Analytics & Business Metrics",
+  "tags": [
+    "dubai-estate-ai",
+    "users",
+    "business",
+    "analytics"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "📊 Total Signups (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_user_signups_total[24h]))",
+          "legendFormat": "Signups",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "🎯 Active Users (Now)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "count(count by(user_id) (rate(dubai_estate_queries_total[15m]) > 0))",
+          "legendFormat": "Active",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "blue"
+              },
+              {
+                "value": 10,
+                "color": "green"
+              },
+              {
+                "value": 50,
+                "color": "yellow"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "⬆️ Upgrades (24h)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_subscription_upgrades_total[24h]))",
+          "legendFormat": "Upgrades",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 5,
+                "color": "yellow"
+              },
+              {
+                "value": 10,
+                "color": "red"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "💵 MRR (AED)",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "dubai_estate_mrr_aed",
+          "legendFormat": "MRR",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "📈 User Signups Over Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_user_signups_total[1h]))",
+          "legendFormat": "Signups per hour",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "🔄 Active Users Over Time",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "expr": "count(count by(user_id) (rate(dubai_estate_queries_total[1h]) > 0))",
+          "legendFormat": "Active Users",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "👤 Users by Tier",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum by(tier) (dubai_estate_active_users)",
+          "legendFormat": "{{tier}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "donut"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "🚧 Query Limit Hits by Tier",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum by(tier) (increase(dubai_estate_query_limit_hits_total[24h]))",
+          "legendFormat": "{{tier}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "📊 Conversion Rate (Limit→Upgrade)",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(dubai_estate_subscription_upgrades_total[24h])) / sum(increase(dubai_estate_query_limit_hits_total[24h])) * 100",
+          "legendFormat": "Conversion %",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 5,
+                "color": "yellow"
+              },
+              {
+                "value": 10,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "🏆 Top Users by Activity",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "topk(20, sum by(user_id) (increase(dubai_estate_queries_total[24h])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "user_id": "User ID",
+              "Value": "Queries (24h)"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Queries (24h)",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "💰 Top Users by Cost",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "topk(20, sum by(user_id) (increase(dubai_estate_query_cost_usd_sum[24h])))",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "user_id": "User ID",
+              "Value": "Cost (USD)"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "Cost (USD)",
+            "desc": true
+          }
+        ]
+      },
+      "fieldConfig": {
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Cost (USD)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "💸 Revenue Trend",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "expr": "dubai_estate_mrr_aed",
+          "legendFormat": "MRR (AED)",
+          "refId": "A"
+        },
+        {
+          "expr": "dubai_estate_revenue_total_aed",
+          "legendFormat": "Total Revenue (AED)",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    }
+  ]
+}

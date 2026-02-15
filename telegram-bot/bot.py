@@ -7,6 +7,8 @@ Direct integration with main.py analysis engine
 import os
 import sys
 import asyncio
+import logging
+import traceback
 from datetime import datetime
 from typing import Dict
 
@@ -28,13 +30,31 @@ load_dotenv()
 # Import the main analysis engine
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from main import handle_query
+from conversation import ConversationStore, is_followup
+
+# Import observability
+from observability import (
+    setup_json_logging,
+    log_user_error,
+    user_analytics,
+    record_command_metrics,
+    record_user_signup,
+    record_subscription_upgrade,
+    record_query_limit_hit,
+    record_followup_detected,
+    record_conversation_reset,
+    update_active_conversations,
+)
+
+# Set up logging for bot
+bot_logger = setup_json_logging("telegram_bot")
 
 # Subscription tiers
 SUBSCRIPTION_TIERS = {
     "free": {
         "name": "Free",
         "price": 0,
-        "queries_per_day": 3,
+        "queries_per_day": 50,  # Increased for testing
         "features": ["Basic property search", "Simple analysis", "Limited results"],
     },
     "basic": {
@@ -89,6 +109,9 @@ class TelegramBotServer:
         # User database (in production, use real database)
         self.users_db = {}
 
+        # Conversation memory for follow-up detection
+        self.conversation_store = ConversationStore()
+
         self.application = Application.builder().token(self.bot_token).build()
         self.setup_handlers()
 
@@ -102,6 +125,8 @@ class TelegramBotServer:
         self.application.add_handler(CommandHandler("status", self.cmd_status))
         self.application.add_handler(CommandHandler("trends", self.cmd_trends))
         self.application.add_handler(CommandHandler("compare", self.cmd_compare))
+        self.application.add_handler(CommandHandler("new", self.cmd_new))
+        self.application.add_handler(CommandHandler("reset_limit", self.cmd_reset_limit))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Handle all text messages as property queries
@@ -113,13 +138,41 @@ class TelegramBotServer:
         """Welcome message and registration"""
         user_id = update.effective_user.id
 
-        if user_id not in self.users_db:
+        # Record command usage
+        record_command_metrics('start', str(user_id))
+
+        # Track new user signup
+        is_new_user = user_id not in self.users_db
+
+        if is_new_user:
             self.users_db[user_id] = {
                 "tier": "free",
                 "joined": datetime.now().isoformat(),
                 "queries_today": 0,
                 "last_reset": datetime.now().date().isoformat(),
             }
+
+            # Track signup event
+            user_analytics.track_event(
+                user_id=str(user_id),
+                event='user_signup',
+                properties={
+                    'username': update.effective_user.username,
+                    'first_name': update.effective_user.first_name,
+                }
+            )
+
+            # Record Prometheus metric
+            record_user_signup('free')
+
+            bot_logger.info(
+                "New user signup",
+                extra={
+                    'user_id': str(user_id),
+                    'username': update.effective_user.username,
+                    'tier': 'free'
+                }
+            )
 
         welcome_msg = f"""
 🏢 *Welcome to Dubai Estate AI!*
@@ -155,6 +208,7 @@ Type /help for all commands or /subscribe to upgrade!
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show help message"""
+        record_command_metrics('help', str(update.effective_user.id))
         help_msg = """
 📚 *Available Commands:*
 
@@ -174,12 +228,17 @@ Type /help for all commands or /subscribe to upgrade!
 
 /status - Check your account status and usage
 
+/new - Start a fresh conversation (clear context)
+
 *Natural Language Queries:*
 You can also just type naturally:
 • "What's the best investment in JBR under 3M?"
 • "Show me villas in Arabian Ranches"
 • "Is Business Bay oversupplied in 2026?"
 • "Calculate ROI for 2.5M apartment in Downtown"
+
+💡 *Follow-up questions work!*
+After an analysis, you can ask "What about JBR?" or "Which one has better ROI?" and I'll remember the context.
 
 I'll understand and help! 🤖
         """
@@ -189,6 +248,7 @@ I'll understand and help! 🤖
     async def cmd_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Search properties"""
         user_id = update.effective_user.id
+        record_command_metrics('search', str(user_id))
 
         if not self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
@@ -205,16 +265,16 @@ I'll understand and help! 🤖
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
-            # Call main.py's handle_query function
-            result = await handle_query(
-                f"Search for properties: {query}. Return top 5 results with key metrics.",
-                user_id=str(user_id)
-            )
+            uid = str(user_id)
+            search_query = f"Search for properties: {query}. Return top 5 results with key metrics."
+            result = await handle_query(search_query, user_id=uid)
             self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
+            self.conversation_store.update(uid, search_query, response_text)
+            update_active_conversations(self.conversation_store.active_session_count())
             await self.send_split_message(update, response_text)
         except Exception as e:
-            error_msg = self.format_error_message(e)
+            error_msg = self.format_error_message(e, user_id=str(user_id), query=query)
             try:
                 await update.message.reply_text(error_msg, parse_mode="Markdown")
             except:
@@ -235,39 +295,56 @@ I'll understand and help! 🤖
             )
             return
 
-        await update.message.chat.send_action(ChatAction.TYPING)
-
-        await update.message.reply_text(
-            "🔬 Analyzing property...\n"
-            "This includes: market analysis, chiller costs, building issues, "
-            "liquidity analysis, and investment scoring."
+        # Send progress indicator with time estimate
+        progress_msg = await update.message.reply_text(
+            "🔍 Analyzing...\n"
+            "⏱️ This will take 30-60 seconds"
         )
 
         try:
-            # Call main.py with full analysis request
-            result = await handle_query(
-                f"Perform comprehensive institutional analysis on: {property_query}. "
-                f"Include all 4 pillars: Macro/Market, Liquidity, Technical, Legal. "
-                f"Provide GO/NO-GO recommendation with investment score.",
-                user_id=str(user_id)
-            )
+            # Call main.py with concise analysis (user can request full via button)
+            full_query = f"Analyze this property: {property_query}"
+
+            uid = str(user_id)
+            result = await handle_query(full_query, user_id=uid)
 
             self.increment_usage(user_id)
 
             # Extract response text
             response_text = result.response if hasattr(result, 'response') else str(result)
 
-            # If Pro or Enterprise, offer PDF report
-            if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
-                keyboard = [
-                    [InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query}")],
+            # Delete progress message
+            try:
+                await progress_msg.delete()
+            except:
+                pass
+
+            # Update conversation session
+            self.conversation_store.update(uid, full_query, response_text)
+            update_active_conversations(self.conversation_store.active_session_count())
+
+            # Add interactive buttons for follow-up actions
+            keyboard = [
+                [
+                    InlineKeyboardButton("📊 Full Report", callback_data=f"full_{property_query[:50]}"),
+                    InlineKeyboardButton("📈 Compare Options", callback_data=f"compare_{property_query[:50]}")
+                ],
+                [
+                    InlineKeyboardButton("💰 Calculate Mortgage", callback_data=f"mortgage_{property_query[:50]}"),
+                    InlineKeyboardButton("🔍 Web Search", callback_data=f"websearch_{property_query[:50]}")
                 ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await self.send_split_message(update, response_text, reply_markup=reply_markup)
-            else:
-                await self.send_split_message(update, response_text)
+            ]
+
+            # Add PDF button for Pro/Enterprise users
+            if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
+                keyboard.append([
+                    InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query[:50]}")
+                ])
+
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await self.send_split_message(update, response_text, reply_markup=reply_markup)
         except Exception as e:
-            error_msg = self.format_error_message(e)
+            error_msg = self.format_error_message(e, user_id=str(user_id), query=property_query)
             try:
                 await update.message.reply_text(error_msg, parse_mode="Markdown")
             except:
@@ -336,17 +413,20 @@ Type /subscribe to upgrade for more queries and features!
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
-            result = await handle_query(
+            trends_query = (
                 f"Get comprehensive market trends for {zone}. "
                 f"Include: price trends, supply pipeline, liquidity metrics, "
-                f"and investment recommendation.",
-                user_id=str(user_id)
+                f"and investment recommendation."
             )
+            uid = str(user_id)
+            result = await handle_query(trends_query, user_id=uid)
             self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
+            self.conversation_store.update(uid, trends_query, response_text)
+            update_active_conversations(self.conversation_store.active_session_count())
             await self.send_split_message(update, response_text)
         except Exception as e:
-            error_msg = self.format_error_message(e)
+            error_msg = self.format_error_message(e, user_id=str(user_id), query=zone)
             try:
                 await update.message.reply_text(error_msg, parse_mode="Markdown")
             except:
@@ -371,25 +451,61 @@ Type /subscribe to upgrade for more queries and features!
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
-            result = await handle_query(
+            compare_query = (
                 f"Compare these properties: {query}. "
                 f"Create side-by-side comparison with price, location, "
-                f"chiller costs, ROI, and recommendation.",
-                user_id=str(user_id)
+                f"chiller costs, ROI, and recommendation."
             )
+            uid = str(user_id)
+            result = await handle_query(compare_query, user_id=uid)
             self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
+            self.conversation_store.update(uid, compare_query, response_text)
+            update_active_conversations(self.conversation_store.active_session_count())
             await self.send_split_message(update, response_text)
         except Exception as e:
-            error_msg = self.format_error_message(e)
+            error_msg = self.format_error_message(e, user_id=str(user_id), query=query)
             try:
                 await update.message.reply_text(error_msg, parse_mode="Markdown")
             except:
                 await update.message.reply_text(error_msg)
 
+    async def cmd_new(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reset conversation context"""
+        uid = str(update.effective_user.id)
+        record_command_metrics('new', uid)
+        self.conversation_store.reset(uid)
+        record_conversation_reset('command')
+        update_active_conversations(self.conversation_store.active_session_count())
+        await update.message.reply_text("🔄 Conversation reset. Ask me anything about Dubai real estate!")
+
+    async def cmd_reset_limit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin command to reset query limits for testing"""
+        user_id = update.effective_user.id
+        uid = str(user_id)
+
+        # Check if user is admin
+        if uid not in self.admin_ids and str(user_id) not in self.admin_ids:
+            await update.message.reply_text("⛔ Admin access required.")
+            return
+
+        # Reset limit for specified user or self
+        if context.args:
+            target_user_id = int(context.args[0])
+        else:
+            target_user_id = user_id
+
+        if target_user_id in self.users_db:
+            self.users_db[target_user_id]["queries_today"] = 0
+            self.users_db[target_user_id]["last_reset"] = datetime.now().date().isoformat()
+            await update.message.reply_text(f"✅ Query limit reset for user {target_user_id}")
+        else:
+            await update.message.reply_text(f"❌ User {target_user_id} not found in database")
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language queries"""
         user_id = update.effective_user.id
+        uid = str(user_id)
 
         if not self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
@@ -397,18 +513,48 @@ Type /subscribe to upgrade for more queries and features!
 
         query = update.message.text
 
-        await update.message.chat.send_action(ChatAction.TYPING)
+        # Detect follow-up and get context if needed
+        followup = is_followup(query, self.conversation_store.has_session(uid))
+        record_followup_detected(followup)
+        conv_context = self.conversation_store.get_context(uid) if followup else None
+
+        # Send progress indicator
+        progress_msg = await update.message.reply_text(
+            "🔍 Analyzing...\n"
+            "⏱️ This will take 30-60 seconds"
+        )
 
         try:
-            # Call main.py's handle_query directly
-            result = await handle_query(query, user_id=str(user_id))
+            result = await handle_query(query, user_id=uid, conversation_context=conv_context)
             self.increment_usage(user_id)
-            # Extract the response text from QueryResponse object
             response_text = result.response if hasattr(result, 'response') else str(result)
-            await self.send_split_message(update, response_text)
+
+            # Delete progress message
+            try:
+                await progress_msg.delete()
+            except:
+                pass
+
+            # Update conversation session (even fresh requests start/replace a session)
+            self.conversation_store.update(uid, query, response_text)
+            update_active_conversations(self.conversation_store.active_session_count())
+
+            # Add interactive buttons for follow-up actions
+            keyboard = [
+                [
+                    InlineKeyboardButton("📊 Full Report", callback_data=f"full_{query[:50]}"),
+                    InlineKeyboardButton("📈 Compare Options", callback_data=f"compare_{query[:50]}")
+                ],
+                [
+                    InlineKeyboardButton("💰 Calculate Mortgage", callback_data=f"mortgage_{query[:50]}"),
+                    InlineKeyboardButton("🔍 Web Search", callback_data=f"websearch_{query[:50]}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await self.send_split_message(update, response_text, reply_markup=reply_markup)
         except Exception as e:
-            # Handle API errors gracefully
-            error_msg = self.format_error_message(e)
+            error_msg = self.format_error_message(e, user_id=uid, query=query)
             try:
                 await update.message.reply_text(error_msg, parse_mode="Markdown")
             except:
@@ -420,6 +566,8 @@ Type /subscribe to upgrade for more queries and features!
         await query.answer()
 
         data = query.data
+        user_id = query.from_user.id
+        uid = str(user_id)
 
         if data.startswith("upgrade_"):
             tier = data.replace("upgrade_", "")
@@ -427,6 +575,46 @@ Type /subscribe to upgrade for more queries and features!
         elif data.startswith("pdf_"):
             property_query = data.replace("pdf_", "")
             await self.generate_pdf_report(query, property_query)
+        elif data.startswith("full_"):
+            # User wants full detailed report
+            original_query = data.replace("full_", "")
+            await query.edit_message_text("📊 Generating full institutional report...\n⏱️ This will take 1-2 minutes")
+
+            full_query = f"Give me a full detailed analysis with all sections for: {original_query}"
+            result = await handle_query(full_query, user_id=uid)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+
+            # Send as new message (edit would be too long)
+            await query.message.reply_text(response_text[:4096])
+            if len(response_text) > 4096:
+                await query.message.reply_text(response_text[4096:8192])
+
+        elif data.startswith("compare_"):
+            original_query = data.replace("compare_", "")
+            await query.edit_message_text("📈 Finding comparable properties...")
+
+            compare_query = f"Show me 3 comparable alternatives to: {original_query}"
+            result = await handle_query(compare_query, user_id=uid)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await query.message.reply_text(response_text[:4096])
+
+        elif data.startswith("mortgage_"):
+            original_query = data.replace("mortgage_", "")
+            await query.edit_message_text("💰 Calculating mortgage scenarios...")
+
+            mortgage_query = f"Calculate mortgage options for: {original_query}. Show 75% and 80% LTV scenarios."
+            result = await handle_query(mortgage_query, user_id=uid)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await query.message.reply_text(response_text[:4096])
+
+        elif data.startswith("websearch_"):
+            original_query = data.replace("websearch_", "")
+            await query.edit_message_text("🔍 Searching web for latest info...")
+
+            web_query = f"Search the web for current information about: {original_query}"
+            result = await handle_query(web_query, user_id=uid)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            await query.message.reply_text(response_text[:4096])
 
     def check_query_limit(self, user_id: int) -> bool:
         """Check if user has queries remaining"""
@@ -437,14 +625,36 @@ Type /subscribe to upgrade for more queries and features!
         # Reset daily counter if needed
         today = datetime.now().date().isoformat()
         if user_data.get("last_reset") != today:
-            self.users_db[user_id]["queries_today"] = 0
-            self.users_db[user_id]["last_reset"] = today
+            # Initialize user if not exists
+            if user_id not in self.users_db:
+                self.users_db[user_id] = {
+                    "tier": "free",
+                    "joined": datetime.now().isoformat(),
+                    "queries_today": 0,
+                    "last_reset": today,
+                }
+            else:
+                self.users_db[user_id]["queries_today"] = 0
+                self.users_db[user_id]["last_reset"] = today
 
         # Check limit
         if tier_info["queries_per_day"] == -1:  # Unlimited
             return True
 
-        return user_data.get("queries_today", 0) < tier_info["queries_per_day"]
+        has_queries = user_data.get("queries_today", 0) < tier_info["queries_per_day"]
+
+        # Track when user hits limit
+        if not has_queries:
+            user_analytics.track_event(
+                user_id=str(user_id),
+                event='query_limit_hit',
+                properties={
+                    'tier': tier,
+                    'queries_used': user_data.get("queries_today", 0)
+                }
+            )
+
+        return has_queries
 
     def get_remaining_queries(self, user_id: int) -> int:
         """Get remaining queries for today"""
@@ -479,9 +689,19 @@ Type /subscribe to upgrade for more queries and features!
             reply_markup=reply_markup,
         )
 
-    def format_error_message(self, error: Exception) -> str:
-        """Format error message for user"""
+    def format_error_message(self, error: Exception, user_id: str = None, query: str = None) -> str:
+        """Format error message for user and log it"""
         error_str = str(error)
+
+        # Log the error that we're about to send to the user
+        if user_id:
+            log_user_error(
+                logger=bot_logger,
+                user_id=user_id,
+                error_message=error_str,
+                exception=error,
+                query=query
+            )
 
         # Check for specific error types
         if "credit balance is too low" in error_str.lower():
