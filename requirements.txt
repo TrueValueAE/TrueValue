@@ -13,3 +13,10 @@ opentelemetry-api==1.22.0
 opentelemetry-sdk==1.22.0
 opentelemetry-exporter-otlp==1.22.0
 opentelemetry-instrumentation-fastapi==0.43b0
+asyncpg==0.30.0
+stripe==8.0.0
+reportlab==4.2.0
+matplotlib>=3.10.0
+openai==1.50.0
+twilio==9.0.0
+redis[hiredis]==5.0.0

@@ -17,15 +17,73 @@ services:
       - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID}
       - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET}
       - DUBAI_REST_API_KEY=${DUBAI_REST_API_KEY}
+      - BRAVE_API_KEY=${BRAVE_API_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql://truevalue:truevalue@postgres:5432/truevalue
+      - REDIS_URL=redis://redis:6379
       - LOKI_URL=http://loki:3100
+      - BOT_MODE=${BOT_MODE:-polling}
     volumes:
       - ./:/app
     networks:
       - monitoring
     depends_on:
-      - loki
-      - prometheus
-      - tempo
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      loki:
+        condition: service_started
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
+  # =====================================================
+  # DATABASE: PostgreSQL
+  # =====================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: truevalue_postgres
+    environment:
+      - POSTGRES_USER=truevalue
+      - POSTGRES_PASSWORD=truevalue
+      - POSTGRES_DB=truevalue
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U truevalue"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # =====================================================
+  # CACHE: Redis
+  # =====================================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: truevalue_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - monitoring
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   # =====================================================
@@ -159,6 +217,10 @@ networks:
 # =====================================================
 
 volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
   prometheus_data:
     driver: local
   loki_data:

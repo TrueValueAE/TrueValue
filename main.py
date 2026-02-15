@@ -22,9 +22,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import anthropic
 
@@ -523,6 +525,63 @@ def _resolve_location(location: str) -> str:
     """Normalise location string to a mock data key."""
     return LOCATION_ALIASES.get(location.lower().strip(), location.lower().strip())
 
+
+# Hardcoded location external IDs for Bayut API (Step 6 fallback)
+BAYUT_LOCATION_IDS = {
+    "dubai-marina": "5002",
+    "business-bay": "6901",
+    "jumeirah-beach-residence": "7205",
+    "downtown-dubai": "6",
+    "jumeirah-village-circle": "8143",
+    "palm-jumeirah": "7634",
+    "dubai-south": "14237",
+    "jlt": "5003",
+    "arjan": "11791",
+    "dubai-hills": "17426",
+    "arabian-ranches": "7871",
+    "city-walk": "18426",
+    "creek-harbour": "22134",
+    "emaar-beachfront": "24272",
+}
+
+
+async def _resolve_bayut_location_id(location: str, api_key: str) -> str:
+    """
+    Resolve a location name to a Bayut locationExternalID.
+    First tries the hardcoded map, then calls the auto-complete API.
+    """
+    resolved = _resolve_location(location)
+
+    # Try hardcoded IDs first
+    if resolved in BAYUT_LOCATION_IDS:
+        return BAYUT_LOCATION_IDS[resolved]
+
+    # Try auto-complete API
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                "https://bayut.p.rapidapi.com/auto-complete",
+                params={"query": location, "hitsPerPage": 5, "page": 0, "lang": "en"},
+                headers={
+                    "X-RapidAPI-Key": api_key,
+                    "X-RapidAPI-Host": "bayut.p.rapidapi.com",
+                },
+                timeout=10.0,
+            )
+        if response.status_code == 200:
+            data = response.json()
+            hits = data.get("hits", [])
+            if hits:
+                ext_id = hits[0].get("externalID", "")
+                if ext_id:
+                    logger.info("Resolved '%s' to Bayut externalID: %s", location, ext_id)
+                    return ext_id
+    except Exception as exc:
+        logger.debug("Bayut auto-complete failed for '%s': %s", location, exc)
+
+    # Return the raw location string as last resort
+    return location
+
 # =====================================================
 # SUPPLY PIPELINE DATA
 # =====================================================
@@ -642,8 +701,10 @@ async def search_bayut_properties(
     if not use_mock:
         logger.info("Calling Bayut RapidAPI for location=%s purpose=%s", location, purpose)
         try:
+            # Step 6: Resolve location name to externalID
+            location_id = await _resolve_bayut_location_id(location, api_key)
             params = {
-                "locationExternalIDs": location,
+                "locationExternalIDs": location_id,
                 "purpose": purpose,
                 "hitsPerPage": 10,
                 "page": 0,
@@ -712,10 +773,9 @@ async def search_bayut_properties(
     return {
         "success": True,
         "source": "mock_data",
-        "note": "Demo data — set BAYUT_API_KEY for live listings",
         "total": len(pool),
         "location_resolved": resolved,
-        "properties": pool,
+        "properties": pool[:3],
     }
 
 
@@ -760,13 +820,10 @@ async def calculate_chiller_cost(provider: str, area_sqft: float):
 
     if cost_per_sqft > 15:
         warning_level = "HIGH"
-        warning_note  = "CRITICAL: Chiller costs will significantly erode net yield. Model carefully before buying."
     elif cost_per_sqft > 10:
         warning_level = "MEDIUM"
-        warning_note  = "Moderate chiller burden. Factor into net yield calculation."
     else:
         warning_level = "LOW"
-        warning_note  = "Acceptable chiller cost — no major concern."
 
     chiller_trap = rate["has_fixed_charges"]
 
@@ -782,15 +839,7 @@ async def calculate_chiller_cost(provider: str, area_sqft: float):
         "monthly_cost_aed": round(total_annual_aed / 12, 2),
         "cost_per_sqft_per_year_aed": round(cost_per_sqft, 2),
         "warning_level": warning_level,
-        "warning_note": warning_note,
         "chiller_trap_detected": chiller_trap,
-        "chiller_trap_explanation": (
-            "Empower charges a FIXED monthly capacity fee regardless of whether the unit "
-            "is occupied or the AC is used. This fee alone can cost AED 15,000–30,000/year "
-            "on a 1,500 sqft apartment, destroying rental yields for landlords."
-            if chiller_trap else
-            "No fixed capacity charges — you only pay for what you consume."
-        ),
     }
 
 
@@ -820,24 +869,17 @@ async def verify_title_deed(title_deed_number: str):
             use_mock = True
 
     logger.info("Using mock title deed data for %s", title_deed_number)
-    # Simulate a plausible verified deed
     return {
         "success": True,
         "source": "mock_data",
-        "note": "Demo verification — set DUBAI_REST_API_KEY for live DLD data",
         "title_deed_number": title_deed_number,
         "status": "VERIFIED",
         "ownership_type": "Freehold",
         "encumbrances": "None registered",
         "mortgages": "No active mortgage",
-        "area_sqft_registered": "Per unit floor plan",
         "dld_reference": f"DLD-{title_deed_number[-6:].upper()}",
         "last_transaction_year": 2022,
         "warnings": [],
-        "recommendation": (
-            "Title appears clean in mock verification. "
-            "Always obtain official DLD Oqood printout and NOC from developer before transfer."
-        ),
     }
 
 
@@ -977,15 +1019,10 @@ async def search_building_issues(building_name: str):
     return {
         "success": True,
         "source": "mock_data",
-        "note": "Set REDDIT_CLIENT_ID for live Reddit search",
         "building": building_name,
         "issues_found": len(issues),
         "risk_signal": risk,
         "issues": issues,
-        "recommendation": (
-            "Request RERA service charge history, developer snagging reports, "
-            "and building inspection records before completing purchase."
-        ),
     }
 
 
@@ -1277,82 +1314,110 @@ async def get_supply_pipeline(zone: str):
     }
 
 
-async def compare_properties(property_a: dict, property_b: dict):
+async def compare_properties(
+    properties: list = None,
+):
     """
-    Side-by-side investment comparison of two properties.
-    Each dict should contain: price, area_sqft, annual_rent, location, chiller_provider.
+    Side-by-side investment comparison of 2-4 properties.
+    Each property dict should contain: price, area_sqft, annual_rent, location, chiller_provider.
     """
-    logger.info("Comparing two properties")
+    if properties is None:
+        properties = []
+
+    if len(properties) < 2:
+        return {"success": False, "error": "At least 2 properties required for comparison"}
+
+    properties = properties[:4]  # Cap at 4
+    logger.info("Comparing %d properties", len(properties))
 
     required_keys = ["price", "area_sqft", "annual_rent", "location", "chiller_provider"]
-
-    def validate(prop, label):
+    for i, prop in enumerate(properties):
         missing = [k for k in required_keys if k not in prop]
         if missing:
-            raise ValueError(f"Property {label} missing fields: {missing}")
+            label = prop.get("label", chr(65 + i))
+            return {"success": False, "error": f"Property {label} missing fields: {missing}"}
 
-    try:
-        validate(property_a, "A")
-        validate(property_b, "B")
-    except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+    # Run all analyses concurrently
+    analysis_tasks = [
+        analyze_investment(
+            property_price=float(p["price"]),
+            area_sqft=float(p["area_sqft"]),
+            annual_rent=float(p["annual_rent"]),
+            location=p["location"],
+            chiller_provider=p["chiller_provider"],
+        )
+        for p in properties
+    ]
+    analyses = await asyncio.gather(*analysis_tasks)
 
-    analysis_a = await analyze_investment(
-        property_price=float(property_a["price"]),
-        area_sqft=float(property_a["area_sqft"]),
-        annual_rent=float(property_a["annual_rent"]),
-        location=property_a["location"],
-        chiller_provider=property_a["chiller_provider"],
-    )
-    analysis_b = await analyze_investment(
-        property_price=float(property_b["price"]),
-        area_sqft=float(property_b["area_sqft"]),
-        annual_rent=float(property_b["annual_rent"]),
-        location=property_b["location"],
-        chiller_provider=property_b["chiller_provider"],
-    )
+    # Build per-property results with metric tracking
+    labels = [p.get("label", chr(65 + i)) for i, p in enumerate(properties)]
+    results = []
+    metric_winners = {"score": [], "yield": [], "price_sqft": [], "chiller": []}
 
-    winner = "A" if analysis_a["investment_score"] >= analysis_b["investment_score"] else "B"
-    margin = abs(analysis_a["investment_score"] - analysis_b["investment_score"])
+    for i, (prop, analysis) in enumerate(zip(properties, analyses)):
+        results.append({
+            "label": labels[i],
+            "score": analysis["investment_score"],
+            "recommendation": analysis["recommendation"],
+            "gross_yield_pct": analysis["financial_summary"]["gross_yield_pct"],
+            "net_yield_pct": analysis["financial_summary"]["net_yield_pct"],
+            "price_per_sqft": analysis["financial_summary"]["price_per_sqft_aed"],
+            "annual_chiller_cost": analysis["financial_summary"]["annual_chiller_cost_aed"],
+            "red_flags": analysis["red_flags"],
+        })
+
+    # Determine per-metric winners
+    scores = [r["score"] for r in results]
+    best_score = max(scores)
+    yields = [r["net_yield_pct"] for r in results]
+    best_yield = max(yields)
+    psf = [r["price_per_sqft"] for r in results]
+    best_psf = min(psf)  # Lower is better
+    chillers = [r["annual_chiller_cost"] for r in results]
+    best_chiller = min(chillers)
+
+    wins = {label: 0 for label in labels}
+    for i, r in enumerate(results):
+        if r["score"] == best_score:
+            wins[labels[i]] += 1
+        if r["net_yield_pct"] == best_yield:
+            wins[labels[i]] += 1
+        if r["price_per_sqft"] == best_psf:
+            wins[labels[i]] += 1
+        if r["annual_chiller_cost"] == best_chiller:
+            wins[labels[i]] += 1
+
+    # Overall winner
+    overall_winner_label = max(wins, key=wins.get)
+    overall_winner_idx = labels.index(overall_winner_label)
+    overall_score = results[overall_winner_idx]["score"]
+    runner_up_scores = sorted(scores, reverse=True)
+    margin = runner_up_scores[0] - runner_up_scores[1] if len(runner_up_scores) > 1 else 0
 
     if margin <= 5:
-        verdict = "TOO CLOSE TO CALL — further due diligence required on both"
-    elif winner == "A":
-        verdict = f"Property A wins by {margin} points — {analysis_a['recommendation']}"
+        verdict = "TOO CLOSE TO CALL — further due diligence required"
     else:
-        verdict = f"Property B wins by {margin} points — {analysis_b['recommendation']}"
+        verdict = f"{overall_winner_label} wins by {margin} points — {results[overall_winner_idx]['recommendation']}"
 
-    return {
+    response = {
         "success": True,
-        "winner": winner,
+        "property_count": len(properties),
+        "winner": overall_winner_label,
         "verdict": verdict,
         "margin_points": margin,
-        "property_a": {
-            "score": analysis_a["investment_score"],
-            "recommendation": analysis_a["recommendation"],
-            "gross_yield_pct": analysis_a["financial_summary"]["gross_yield_pct"],
-            "net_yield_pct": analysis_a["financial_summary"]["net_yield_pct"],
-            "price_per_sqft": analysis_a["financial_summary"]["price_per_sqft_aed"],
-            "annual_chiller_cost": analysis_a["financial_summary"]["annual_chiller_cost_aed"],
-            "red_flags": analysis_a["red_flags"],
-        },
-        "property_b": {
-            "score": analysis_b["investment_score"],
-            "recommendation": analysis_b["recommendation"],
-            "gross_yield_pct": analysis_b["financial_summary"]["gross_yield_pct"],
-            "net_yield_pct": analysis_b["financial_summary"]["net_yield_pct"],
-            "price_per_sqft": analysis_b["financial_summary"]["price_per_sqft_aed"],
-            "annual_chiller_cost": analysis_b["financial_summary"]["annual_chiller_cost_aed"],
-            "red_flags": analysis_b["red_flags"],
-        },
+        "wins_by_property": wins,
+        "properties": {labels[i]: results[i] for i in range(len(results))},
     }
+
+    return response
 
 
 # =====================================================
 # TOOL ROUTER
 # =====================================================
 
-async def _execute_tool(tool_name: str, tool_input: dict) -> dict:
+async def _execute_tool_raw(tool_name: str, tool_input: dict) -> dict:
     """Route a tool call to the correct async function."""
     if tool_name == "search_bayut_properties":
         return await search_bayut_properties(**tool_input)
@@ -1374,6 +1439,25 @@ async def _execute_tool(tool_name: str, tool_input: dict) -> dict:
         return await web_search_dubai(**tool_input)
     else:
         return {"error": f"Unknown tool: {tool_name}", "success": False}
+
+
+async def _execute_tool(tool_name: str, tool_input: dict) -> dict:
+    """Execute a tool with Redis cache wrapping (Step 10)."""
+    from cache import get_cached, set_cached
+
+    # Check cache first
+    cached = await get_cached(tool_name, tool_input)
+    if cached is not None:
+        logger.info("Cache HIT for %s", tool_name)
+        return cached
+
+    # Execute tool
+    result = await _execute_tool_raw(tool_name, tool_input)
+
+    # Cache the result
+    await set_cached(tool_name, tool_input, result)
+
+    return result
 
 
 # =====================================================
@@ -1554,40 +1638,33 @@ TOOLS = [
     {
         "name": "compare_properties",
         "description": (
-            "Side-by-side investment comparison of two properties. "
-            "Runs full analyze_investment on both and declares a winner with scoring rationale."
+            "Side-by-side investment comparison of 2-4 properties. "
+            "Runs full analyze_investment on each, determines per-metric winners, "
+            "and declares an overall winner with scoring rationale. "
+            "Accepts either a 'properties' array (preferred) or old-style property_a/property_b."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "property_a": {
-                    "type": "object",
-                    "description": "First property details",
-                    "properties": {
-                        "price":            {"type": "number", "description": "Purchase price AED"},
-                        "area_sqft":        {"type": "number", "description": "Area in sqft"},
-                        "annual_rent":      {"type": "number", "description": "Annual rent AED"},
-                        "location":         {"type": "string", "description": "Zone name"},
-                        "chiller_provider": {"type": "string", "description": "empower or lootah"},
-                        "label":            {"type": "string", "description": "Human label e.g. 'Marina Gate 2BR'"},
+                "properties": {
+                    "type": "array",
+                    "description": "Array of 2-4 properties to compare",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "price":            {"type": "number", "description": "Purchase price AED"},
+                            "area_sqft":        {"type": "number", "description": "Area in sqft"},
+                            "annual_rent":      {"type": "number", "description": "Annual rent AED"},
+                            "location":         {"type": "string", "description": "Zone name"},
+                            "chiller_provider": {"type": "string", "description": "empower or lootah"},
+                            "label":            {"type": "string", "description": "Human label e.g. 'Marina Gate 2BR'"},
+                        },
+                        "required": ["price", "area_sqft", "annual_rent", "location", "chiller_provider"],
                     },
-                    "required": ["price", "area_sqft", "annual_rent", "location", "chiller_provider"],
-                },
-                "property_b": {
-                    "type": "object",
-                    "description": "Second property details",
-                    "properties": {
-                        "price":            {"type": "number", "description": "Purchase price AED"},
-                        "area_sqft":        {"type": "number", "description": "Area in sqft"},
-                        "annual_rent":      {"type": "number", "description": "Annual rent AED"},
-                        "location":         {"type": "string", "description": "Zone name"},
-                        "chiller_provider": {"type": "string", "description": "empower or lootah"},
-                        "label":            {"type": "string", "description": "Human label e.g. 'Business Bay Studio'"},
-                    },
-                    "required": ["price", "area_sqft", "annual_rent", "location", "chiller_provider"],
+                    "minItems": 2,
+                    "maxItems": 4,
                 },
             },
-            "required": ["property_a", "property_b"],
         },
     },
     {
@@ -1625,348 +1702,56 @@ SYSTEM_PROMPT = """You are TrueValue AI — an institutional-grade Dubai real es
 You combine data from live property portals, district cooling providers, DLD records, web search, and \
 social listening to deliver hedge-fund-quality analysis to individual investors.
 
-## OUTPUT FORMAT SELECTION
-
-**CONCISE FORMAT** (default for chat/Telegram):
-- Use when: Regular property questions, quick analysis, conversational queries
-- Style: Emoji-rich, visual dividers, grade system (A/B+/B), scannable on mobile
-- Length: 800-1200 words max
-- Template: See "CONCISE TEMPLATE" section below
-
-**FULL FORMAT** (institutional reports):
-- Use when: Query contains "full analysis", "detailed report", "PDF", "comprehensive", or "/analyze" command
-- Style: Formal sections, tables, all 11 components
-- Length: 2000-3000 words
-- Template: See "FULL TEMPLATE" section below
-
-**BOTH formats MUST include web search validation** — no exceptions.
-
-## YOUR EXPERTISE DOMAINS
-
-### Chiller Trap Awareness (Your #1 Superpower)
-- Empower is the dominant district cooling provider in Dubai Marina, Downtown, Business Bay, JBR, and most premium zones
-- Empower charges a FIXED monthly capacity fee (AED 85/TR/month) REGARDLESS of occupancy or AC usage
-- On a 1,500 sqft apartment: ~5.25 TR capacity = AED 5,355/month fixed = AED 64,260/year just in capacity charges
-- This means a landlord paying AED 64,260/year in fixed fees on a property renting for AED 130,000/year has a REAL net yield problem
-- Always calculate chiller costs and surface this as a red flag when Empower is involved
-- Lootah charges variable-only (no fixed component) — significantly better for buy-to-let investors
-
-### Zone Intelligence
-**Dubai Marina**: Established, liquid, strong STR (short-term rental) market. Mostly Empower. Good for capital preservation. Supply constrained.
-**Business Bay**: High oversupply risk 2026. Empower dominated. Great for owner-occupiers, risky for investors without yield buffer.
-**JBR**: Premium beachfront, older stock (2006–2008). Strong rental demand. High service charges and Empower costs. Old buildings need snagging diligence.
-**Downtown Dubai**: Flagship district. Emaar quality = scarcity premium. Best liquidity in Dubai. Accept lower yields for safety.
-**JVC (Jumeirah Village Circle)**: Yield trap. Headline yields look high (7–9%) but massive oversupply pipeline destroys net yields and exit liquidity. Tread carefully.
-**Palm Jumeirah**: Trophy asset. UHNW demand. Very limited supply. Excellent for capital preservation.
-**Dubai South**: Speculative long-hold. Massive pipeline. Not suitable for income investors.
-**Arjan**: High-yield outer zone. Family-oriented. Good for cash flow. Maintenance quality varies by building. Lower liquidity than premium zones.
-
-### 4-Pillar Investment Framework
-When analysing any property, assess:
-1. **PRICE** — Is the price per sqft at, below, or above zone average? Distressed pricing = opportunity.
-2. **YIELD** — Gross yield (rent/price) and especially NET yield after chiller, service charge, and vacancy.
-3. **LIQUIDITY** — How easy is exit? Downtown > Marina > JBR > Business Bay > JVC for resale speed.
-4. **QUALITY** — Building age, developer track record, snagging issues, supply pipeline risk.
-
-### Red Flag Thresholds
-- Chiller cost > AED 15/sqft/year: HIGH warning
-- Chiller cost > AED 10/sqft/year: MEDIUM warning
-- Net yield < 4%: Poor (Dubai opportunity cost is too high)
-- Net yield < 3%: Critical — do not buy for investment
-- Price per sqft > 15% above zone average: Overpriced flag
-- Supply pipeline risk HIGH or VERY HIGH: Yield compression likely
-- Building > 15 years: Mandatory snagging and major maintenance escrow check
-- Service charge > AED 25/sqft/year: High — verify with RERA and factor into net yield
-
-## MANDATORY ANALYSIS STRUCTURE (For Full Property Analysis)
-
-Use this structure for comprehensive property analysis:
-
-### 1. EXECUTIVE SUMMARY
-- Investment Score (0-100) | Recommendation | Signal (GREEN/YELLOW/ORANGE/RED)
-- 2-3 sentence summary of opportunity
-
-### 2. 4-PILLAR DEEP DIVE
-**PILLAR 1: MACRO/MARKET**
-- Price vs zone average (% discount/premium)
-- Gross yield vs Dubai benchmarks
-- Supply risk assessment
-- Market dynamics
-
-**PILLAR 2: LIQUIDITY & COSTS**
-- Chiller analysis (provider, annual cost, warning level)
-- Service charge estimate
-- Net yield after ALL costs
-- Days on Market estimate
-
-**PILLAR 3: TECHNICAL & QUALITY**
-- Building age and condition
-- Snagging reports (from search_building_issues + web_search_dubai)
-- Developer track record
-- Maintenance quality
-
-**PILLAR 4: LEGAL & COMPLIANCE**
-- Title deed verification status
-- Due diligence gaps
-- RERA compliance
-
-### 3. 🌐 LIVE MARKET INTELLIGENCE (STRATEGIC)
-Run 1-2 targeted web searches for validation:
-
-**Search Priority (pick most relevant):**
-1. For building-specific: "[building name] reviews snagging Dubai" → Building issues
-2. For zone analysis: "[zone name] property prices 2024 trends" → Market trends
-3. For supply concerns: "[zone name] oversupply new launches" → Pipeline validation
-
-**Rules:**
-- CONCISE format: 1-2 web searches maximum
-- FULL format: 3-4 web searches maximum
-- Only search when data gaps exist or validation needed
-- Skip web search if hardcoded data is sufficient
-
-**Output Format:
-```
-### 🌐 LIVE MARKET INTELLIGENCE
-
-**Web Search Results ([X] sources checked):**
-
-1. Building Reviews: [Found/Not Found]
-   - [Key findings from search results]
-
-2. Zone Trends: [Found/Not Found]
-   - [Current pricing trends, recent sales]
-
-3. Developer Intel: [Found/Not Found]
-   - [Reputation, delivery track record]
-
-4. Supply Updates: [Found/Not Found]
-   - [New projects, oversupply signals]
-
-**Validation Status:**
-✅ Confirms: [what web data validates]
-⚠️ Contradicts: [any conflicts with our data]
-🆕 New Intel: [anything not in hardcoded data]
-
-**Impact:** [how web findings change score/recommendation, if at all]
-```
-
-### 4. KEY METRICS TABLE
-Present in table format:
-- Purchase Price | Grade
-- Price per sqft | Grade
-- Gross Yield | Grade
-- Net Yield | Grade
-- Chiller Cost | Grade
-- Liquidity Score | Grade
-
-### 5. 📊 COMPARATIVE ANALYSIS (if applicable)
-Compare to 2-3 alternative zones/properties:
-
-| Zone/Property | Price | Gross Yield | Net Yield | Liquidity | Verdict |
-|--------------|-------|-------------|-----------|-----------|---------|
-| **Target** | X | X% | X% | Medium | **Winner** |
-| Alternative 1 | X | X% | X% | High | Runner-up |
-| Alternative 2 | X | X% | X% | Low | Pass |
-
-### 6. 🚪 EXIT STRATEGY & SCENARIOS
-**3-Year Hold Analysis:**
-
-- **Best Case (20% appreciation):** Sale price, rental income, total ROI
-- **Base Case (10% appreciation):** Sale price, rental income, total ROI
-- **Worst Case (0% appreciation):** Yield-only return
-
-**Risk Buffer:** [What minimum return is guaranteed by yield alone]
-
-### 7. 💰 FINANCING IMPACT (if relevant)
-**If using 80% LTV mortgage:**
-- Down payment required
-- Monthly mortgage vs monthly rent
-- Cash-on-cash return (leveraged vs unleveraged)
-
-### 8. 👥 TARGET TENANT PROFILE
-- Primary tenant type (professionals, families, students)
-- Rental stability factors
-- Expected vacancy between tenants
-- Marketing time estimate
-
-### 9. 🚨 RED FLAGS & MITIGATION
-Format each risk as:
-**[Risk Name]** (Severity: HIGH/MEDIUM/LOW)
-- Issue: [description]
-- Mitigation: [specific action to address]
-- Residual Risk: [LOW/MEDIUM/HIGH after mitigation]
-
-### 10. 🎯 DECISION MATRIX
-```
-✅ BUY IF:
-- [Specific condition 1]
-- [Specific condition 2]
-
-❌ AVOID IF:
-- [Specific condition 1]
-- [Specific condition 2]
-```
-
-### 11. ACTION ITEMS
-Numbered, prioritized checklist:
-1. ✅/🔍/💰/📋 [Action with appropriate icon]
-
-## Tool Usage Protocol
-1. For property searches: use search_bayut_properties first to get real listings
-2. For any investment question: ALWAYS run calculate_chiller_cost
-3. For full analysis: run analyze_investment for a scored recommendation
-4. For due diligence: run search_building_issues AND web_search_dubai (building reviews)
-5. For market context: run get_market_trends, get_supply_pipeline, AND web_search_dubai (zone trends)
-6. For comparisons: use compare_properties tool, then add comparative table
-7. For live validation: Use web_search_dubai strategically (1-2 for concise, 3-4 for full reports)
-
-**Web Search Strategy:**
-- Use when: Specific building unknown, recent market shifts suspected, supply pipeline unclear
-- Skip when: Using well-known properties with recent hardcoded data
-- Quality over quantity: Better 2 targeted searches than 6 generic ones
-
-**Tool efficiency:**
-- Concise format: 3-5 tools (prioritize speed)
-- Full format: 5-8 tools (prioritize depth)
-- Always include: chiller calc, investment analysis
-- Optional: web search (only if value-adding), building issues, comparisons
-
-## CONCISE TEMPLATE (Default for Telegram/Chat)
-
-Use this exact structure for regular queries:
-
-```
-🏢 [PROPERTY NAME]
-[Price] | [Size] | [Price per sqft]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 VERDICT: [✅ STRONG BUY / 🟡 CAUTION / ⚠️ NEGOTIATE / ❌ PASS]
-Investment Score: [X]/100
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-💰 WHY [BUY/AVOID]:
-1. [Key reason with number]
-2. [Key reason with number]
-3. [Key reason with number] ⭐ (use star for biggest advantage)
-4. [Key reason]
-
-⚠️ WATCH FOR:
-- [Risk 1]
-- [Risk 2]
-- [Risk 3]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-📊 4-PILLAR BREAKDOWN
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-🏛️ MACRO & MARKET: [A+/A/B+/B/C]
-✅/🟡/❌ [Key point with metric]
-✅/🟡/❌ [Key point with metric]
-✅/🟡/❌ [Key point with metric]
-🟡 [Risk or concern]
-
-💧 LIQUIDITY & COSTS: [A+/A/B+/B/C]
-✅/🟡/❌ [Chiller detail with cost]
-✅/🟡/❌ [Service charge detail]
-✅/🟡/❌ [Net yield detail]
-🎯 Annual profit: [AED amount]
-
-🏗️ TECHNICAL & QUALITY: [A+/A/B+/B/C]
-✅/🟡/❌ [Building age/condition]
-✅/🟡/❌ [Location/community]
-⚠️ [Any issues found]
-⚠️ [Any concerns]
-
-⚖️ LEGAL & COMPLIANCE: [A+/A/B+/B/C]
-🟡/✅/❌ [Title verification status]
-🟡/✅/❌ [Service charge history]
-🟡/✅/❌ [Developer track record]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-🌐 WEB CHECK (Live Intel)
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Checked [X] recent sources:
-• [Source 1]: [Key finding in 1 line]
-• [Source 2]: [Key finding in 1 line]
-• [Source 3]: [Key finding in 1 line]
-
-💡 Impact: [How web findings affect recommendation]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-💡 COMPARABLE OPTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-[Comparison statement - is this best option?]
-[Similar properties with prices]
-[Value assessment]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-📋 NEXT STEPS
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. ✅ [Immediate action]
-2. 🔍 [Due diligence action]
-3. 👀 [Verification action]
-4. 💰 [Negotiation action]
-5. 📄 [Documentation action]
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-⏱️ URGENCY: [HIGH/MEDIUM/LOW]
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-[Why urgent or not]
-
-Expected return: [X]% annual yield
-+ [X]% appreciation = [X]% total
-
-🎯 [Final verdict in one line]
-
-───────────────────────────
-Want more details?
-
-Reply: "Full Report" for institutional analysis
-Reply: "Compare" to see alternatives
-Reply: "Mortgage" to calculate financing
-```
-
-**Key rules for concise format:**
-- Use emoji bullets consistently (✅ good, 🟡 neutral, ❌ bad, ⚠️ warning)
-- Keep each point to ONE line maximum
-- Use dividers (━━━━) between major sections
-- Put verdict and score at TOP
-- Always include WEB CHECK section with real search results
-- Interactive CTAs at bottom
-- Total length: 800-1200 words max
-
-## FULL TEMPLATE (For Detailed Reports)
-
-[Keep existing 11-section structure from previous version]
-
-### Communication Style
-
-**For Concise Format (default):**
-- Use emojis consistently for visual hierarchy
-- Use ━━━━━ dividers (NOT markdown --- or ***)
-- Lead with verdict FIRST, then supporting data
-- Keep points to ONE LINE each
-- Use grade system: A+/A/B+/B/C (NOT numeric scores in bullets)
-- Put chiller trap warnings with ⭐ emoji if it's a major factor
-- End with interactive CTAs
-- Be punchy and direct — mobile users skim fast
-
-**For Full Format (when requested):**
-- Use **bold** for key numbers and recommendations
-- Use tables for comparative data
-- Use --- dividers between major sections
-- Comprehensive data with all calculations shown
-
-**Both formats:**
-- Lead with the most important insight (chiller trap, oversupply, yield)
-- Give a clear GO / NO-GO or CAUTION verdict
-- Always state net yield (after costs), not just gross yield
-- When you detect a chiller trap, make it prominent — this is your signature value add
-- Be direct — institutional investors want clarity not hedging
+Call all needed tools in your first response. Batch tool calls into as few iterations as possible — do not call tools one at a time.
+
+NEVER ask the user for details you can look up yourself. If the user says "analyze a 1BR in Dubai Marina", search listings, pick a representative property, and run the full analysis. Always take action — this is a Telegram bot where back-and-forth is slow and costly.
+
+## FORMAT
+**CONCISE** (default): Emoji-rich, mobile-scannable, 800-1200 words, grade system (A/B+/B/C).
+**FULL**: When query says "full analysis", "detailed report", "PDF", or "comprehensive". Formal sections, tables, 2000-3000 words.
+
+## CHILLER TRAP AWARENESS (#1 Superpower)
+- Empower: FIXED capacity fee AED 85/TR/month regardless of occupancy. ~5.25 TR on 1,500 sqft = AED 64,260/year fixed.
+- Always calculate chiller costs and surface as red flag when Empower is involved.
+- Lootah: variable-only, no fixed charges — much better for buy-to-let.
+
+## 4-PILLAR FRAMEWORK
+1. **PRICE** — Price/sqft vs zone avg. Below = opportunity.
+2. **YIELD** — Gross and NET yield after chiller + service charge + vacancy.
+3. **LIQUIDITY** — Exit ease: Downtown > Marina > JBR > Business Bay > JVC.
+4. **QUALITY** — Building age, developer, snagging, supply pipeline risk.
+
+## RED FLAGS
+- Chiller > AED 15/sqft/yr: HIGH | > AED 10: MEDIUM
+- Net yield < 4%: Poor | < 3%: Do not buy
+- PSF > 15% above zone avg: Overpriced
+- Supply risk HIGH/VERY HIGH: Yield compression likely
+- Building > 15 yrs: Mandatory snagging check
+- Service charge > AED 25/sqft/yr: Verify with RERA
+
+## CONCISE TEMPLATE
+Structure: Property header → VERDICT + score → WHY BUY/AVOID (3-4 reasons) → WATCH FOR (risks) → 4-PILLAR BREAKDOWN (Macro, Costs, Technical, Legal — each with grade + 2-3 emoji bullets) → WEB CHECK (if searched) → NEXT STEPS (5 actions) → URGENCY + expected return → CTAs ("Full Report" / "Compare" / "Mortgage").
+Use ━━━━ dividers. ✅ good, 🟡 neutral, ❌ bad, ⚠️ warning. One line per point. Verdict at TOP.
+
+## FULL TEMPLATE
+11 sections: 1. Executive Summary (score/recommendation) 2. 4-Pillar Deep Dive 3. Live Market Intelligence (web search results) 4. Key Metrics Table 5. Comparative Analysis 6. Exit Strategy & Scenarios (3-yr hold) 7. Financing Impact 8. Target Tenant Profile 9. Red Flags & Mitigation 10. Decision Matrix (BUY IF / AVOID IF) 11. Action Items.
+
+## TOOL PROTOCOL
+1. search_bayut_properties for listings
+2. ALWAYS calculate_chiller_cost for investment questions
+3. analyze_investment for scored recommendation
+4. search_building_issues + web_search_dubai for due diligence
+5. get_market_trends + get_supply_pipeline for market context
+6. compare_properties for comparisons
+7. web_search_dubai when it adds value (1-2 concise, 3-4 full)
+
+Concise: 3-5 tools. Full: 5-8 tools. Always include chiller calc + investment analysis.
+
+## STYLE
+- Lead with most important insight. Clear GO/NO-GO verdict.
+- Always state NET yield, not just gross.
+- Make chiller trap prominent when detected — your signature value add.
+- Be direct — institutional investors want clarity not hedging.
 """
 
 # =====================================================
@@ -1994,18 +1779,23 @@ async def handle_query(query: str, user_id: str = "anonymous", conversation_cont
     # Track total tokens across all iterations
     total_input_tokens = 0
     total_output_tokens = 0
-    model = "claude-sonnet-4-20250514"
+    model = "claude-haiku-4-5-20251001"
 
     try:
-        for iteration in range(15):  # Increased from 7 to handle complex analyses
+        for iteration in range(7):  # Capped at 7 — batching instruction in prompt reduces iterations
             logger.debug("Iteration %d — calling Claude", iteration + 1)
 
             response = claude.messages.create(
                 model=model,
                 max_tokens=4000,
-                system=SYSTEM_PROMPT,
+                system=[{
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}
+                }],
                 tools=TOOLS,
                 messages=conversation,
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}
             )
 
             # Track tokens from this iteration
@@ -2014,11 +1804,13 @@ async def handle_query(query: str, user_id: str = "anonymous", conversation_cont
 
             logger.debug("Stop reason: %s", response.stop_reason)
 
-            if response.stop_reason == "end_turn":
-                # Extract final text
+            if response.stop_reason in ("end_turn", "max_tokens"):
+                # Extract final text (may be truncated if max_tokens)
                 final_text = "".join(
                     block.text for block in response.content if hasattr(block, "text")
                 )
+                if response.stop_reason == "max_tokens":
+                    logger.warning("Response truncated by max_tokens for user_id=%s", user_id)
 
                 # Log successful query completion with full metrics
                 log_query_complete(
@@ -2042,7 +1834,7 @@ async def handle_query(query: str, user_id: str = "anonymous", conversation_cont
             elif response.stop_reason == "tool_use":
                 # Convert ContentBlocks to plain dicts for serialization
                 assistant_content = []
-                tool_results = []
+                tool_blocks = []
 
                 for block in response.content:
                     if block.type == "text":
@@ -2054,25 +1846,31 @@ async def handle_query(query: str, user_id: str = "anonymous", conversation_cont
                             "name": block.name,
                             "input": block.input
                         })
+                        tool_blocks.append(block)
+                        tools_used.append(block.name)
 
-                        # Execute the tool
-                        tool_name = block.name
-                        tool_input = block.input
-                        tool_id = block.id
+                # Step 11: Execute tools in parallel when multiple tool_use blocks
+                if len(tool_blocks) > 1:
+                    logger.info("Executing %d tools in parallel: %s",
+                                len(tool_blocks), [b.name for b in tool_blocks])
+                    tasks = [_execute_tool(b.name, b.input) for b in tool_blocks]
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                else:
+                    results = [await _execute_tool(tool_blocks[0].name, tool_blocks[0].input)] if tool_blocks else []
 
-                        tools_used.append(tool_name)
-                        logger.info("Executing tool: %s", tool_name)
+                # Build tool results matching tool_use_ids
+                tool_results = []
+                for block, result in zip(tool_blocks, results):
+                    if isinstance(result, Exception):
+                        logger.error("Tool %s failed: %s", block.name, result)
+                        result = {"error": str(result), "success": False}
 
-                        result = await _execute_tool(tool_name, tool_input)
-
-                        # Create tool result
-                        result_str = json.dumps(result) if not isinstance(result, str) else result
-
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": result_str,
-                        })
+                    result_str = json.dumps(result) if not isinstance(result, str) else result
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_str,
+                    })
 
                 # Append assistant message with tool uses
                 conversation.append({"role": "assistant", "content": assistant_content})
@@ -2158,7 +1956,7 @@ async def root():
         "service": "TrueValue — Dubai Real Estate AI",
         "version": "2.0.0",
         "status": "operational",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-haiku-4-5-20251001",
         "tools_available": len(TOOLS),
         "endpoints": {
             "query":  "POST /api/query",
@@ -2223,11 +2021,86 @@ async def get_user_metrics(user_id: str):
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus metrics endpoint"""
-    from fastapi.responses import PlainTextResponse
     return PlainTextResponse(
         content=get_prometheus_metrics(),
         media_type="text/plain; version=0.0.4"
     )
+
+
+# =====================================================
+# WEBHOOK ENDPOINTS
+# =====================================================
+
+@app.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    """Stripe payment webhook endpoint (Step 4)."""
+    from payments import handle_webhook_event, is_stripe_configured
+
+    if not is_stripe_configured():
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature", "")
+
+    result = await handle_webhook_event(payload, sig_header)
+
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+
+    return result
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Telegram bot webhook endpoint for production (Step 3)."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "telegram-bot"))
+    from telegram import Update
+
+    data = await request.json()
+
+    # Get or create the bot application
+    if not hasattr(telegram_webhook, "_app"):
+        from bot import TelegramBotServer
+        bot = TelegramBotServer()
+        await bot.application.initialize()
+        telegram_webhook._app = bot.application
+
+    update = Update.de_json(data, telegram_webhook._app.bot)
+    await telegram_webhook._app.process_update(update)
+    return {"ok": True}
+
+
+@app.post("/webhook/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """WhatsApp webhook via Twilio (Step 9)."""
+    form = await request.form()
+
+    from_number = form.get("From", "")
+    body = form.get("Body", "")
+    media_url = form.get("MediaUrl0")
+    media_type = form.get("MediaContentType0")
+
+    # Import the WhatsApp bot handler
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "whatsapp-bot"))
+    from bot import handle_whatsapp_message
+
+    response_text = await handle_whatsapp_message(
+        from_number=from_number,
+        body=body,
+        media_url=media_url,
+        media_content_type=media_type,
+    )
+
+    # Return TwiML response
+    twiml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f"<Message>{response_text[:1600]}</Message>"
+        "</Response>"
+    )
+    return PlainTextResponse(content=twiml, media_type="application/xml")
 
 
 # =====================================================

@@ -22,7 +22,10 @@
       "Bash(docker-compose restart:*)",
       "Bash(docker-compose stop:*)",
       "Bash(docker exec:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(docker-compose up:*)"
     ]
   }
 }

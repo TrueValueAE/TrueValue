@@ -665,6 +665,54 @@ web_search_total = PromCounter(
     ['status']  # success / failure / unavailable
 )
 
+# Database metrics
+db_queries_total = PromCounter(
+    'dubai_estate_db_queries_total',
+    'Database query count',
+    ['operation']  # get_user / create_user / log_conversation / etc.
+)
+
+db_query_duration = Histogram(
+    'dubai_estate_db_query_duration_seconds',
+    'Database query duration',
+    ['operation'],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+)
+
+# Cache metrics
+cache_hits_total = PromCounter(
+    'dubai_estate_cache_hits_total',
+    'Cache hit count',
+    ['tool_name']
+)
+
+cache_misses_total = PromCounter(
+    'dubai_estate_cache_misses_total',
+    'Cache miss count',
+    ['tool_name']
+)
+
+# PDF generation metrics
+pdf_generations_total = PromCounter(
+    'dubai_estate_pdf_generations_total',
+    'PDF report generations',
+    ['status']  # success / failure
+)
+
+# Voice transcription metrics
+voice_transcriptions_total = PromCounter(
+    'dubai_estate_voice_transcriptions_total',
+    'Voice message transcriptions',
+    ['status']  # success / failure
+)
+
+# Payment metrics
+payment_events_total = PromCounter(
+    'dubai_estate_payment_events_total',
+    'Payment lifecycle events',
+    ['event_type']  # checkout_completed / subscription_updated / subscription_cancelled / payment_failed
+)
+
 
 # =====================================================
 # PROMETHEUS EXPORTER FUNCTIONS
@@ -752,6 +800,38 @@ def update_active_conversations(count: int):
 def record_web_search(status: str):
     """Record a web search event. Status: success / failure / unavailable"""
     web_search_total.labels(status=status).inc()
+
+
+def record_db_query(operation: str, duration_seconds: float = 0):
+    """Record a database query."""
+    db_queries_total.labels(operation=operation).inc()
+    if duration_seconds > 0:
+        db_query_duration.labels(operation=operation).observe(duration_seconds)
+
+
+def record_cache_hit(tool_name: str):
+    """Record a cache hit."""
+    cache_hits_total.labels(tool_name=tool_name).inc()
+
+
+def record_cache_miss(tool_name: str):
+    """Record a cache miss."""
+    cache_misses_total.labels(tool_name=tool_name).inc()
+
+
+def record_pdf_generation(status: str):
+    """Record a PDF generation event."""
+    pdf_generations_total.labels(status=status).inc()
+
+
+def record_voice_transcription(status: str):
+    """Record a voice transcription event."""
+    voice_transcriptions_total.labels(status=status).inc()
+
+
+def record_payment_event(event_type: str):
+    """Record a payment lifecycle event."""
+    payment_events_total.labels(event_type=event_type).inc()
 
 
 def get_prometheus_metrics() -> str:

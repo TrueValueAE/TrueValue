@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 Dubai Estate Telegram Bot
-Direct integration with main.py analysis engine
+Direct integration with main.py analysis engine.
+Persistent user storage via database.py (Step 2).
 """
 
 import os
 import sys
 import asyncio
 import logging
-import traceback
-from datetime import datetime
+import time
+from datetime import datetime, date
 from typing import Dict
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,6 +32,22 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from main import handle_query
 from conversation import ConversationStore, is_followup
+
+# Database imports (Step 2)
+from database import (
+    init_db, close_db, is_db_available,
+    get_or_create_user, get_user, increment_query_count,
+    log_conversation, reset_daily_queries, log_subscription_event,
+)
+
+# Payments import (Step 4)
+from payments import (
+    create_checkout_session, create_customer_portal_session,
+    is_stripe_configured,
+)
+
+# Transcription import (Step 8)
+from transcription import transcribe_voice, is_transcription_available
 
 # Import observability
 from observability import (
@@ -54,12 +71,12 @@ SUBSCRIPTION_TIERS = {
     "free": {
         "name": "Free",
         "price": 0,
-        "queries_per_day": 50,  # Increased for testing
+        "queries_per_day": 50,
         "features": ["Basic property search", "Simple analysis", "Limited results"],
     },
     "basic": {
         "name": "Basic",
-        "price": 99,  # AED per month
+        "price": 99,
         "queries_per_day": 20,
         "features": [
             "Advanced property search",
@@ -70,7 +87,7 @@ SUBSCRIPTION_TIERS = {
     },
     "pro": {
         "name": "Professional",
-        "price": 299,  # AED per month
+        "price": 299,
         "queries_per_day": 100,
         "features": [
             "All Basic features",
@@ -83,8 +100,8 @@ SUBSCRIPTION_TIERS = {
     },
     "enterprise": {
         "name": "Enterprise",
-        "price": 999,  # AED per month
-        "queries_per_day": -1,  # Unlimited
+        "price": 999,
+        "queries_per_day": -1,
         "features": [
             "All Pro features",
             "Unlimited queries",
@@ -106,8 +123,8 @@ class TelegramBotServer:
 
         self.admin_ids = os.getenv("TELEGRAM_ADMIN_IDS", "").split(",")
 
-        # User database (in production, use real database)
-        self.users_db = {}
+        # In-memory fallback for when DB is unavailable
+        self._users_fallback = {}
 
         # Conversation memory for follow-up detection
         self.conversation_store = ConversationStore()
@@ -126,53 +143,146 @@ class TelegramBotServer:
         self.application.add_handler(CommandHandler("trends", self.cmd_trends))
         self.application.add_handler(CommandHandler("compare", self.cmd_compare))
         self.application.add_handler(CommandHandler("new", self.cmd_new))
+        self.application.add_handler(CommandHandler("manage", self.cmd_manage))
         self.application.add_handler(CommandHandler("reset_limit", self.cmd_reset_limit))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
+
+        # Voice message handler (Step 8)
+        self.application.add_handler(
+            MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice)
+        )
 
         # Handle all text messages as property queries
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
 
+    # =====================================================
+    # USER DATA HELPERS (DB-backed with in-memory fallback)
+    # =====================================================
+
+    async def _get_user_data(self, user_id: int) -> dict:
+        """Get user data from DB or fallback."""
+        if is_db_available():
+            user = await get_user(user_id)
+            if user:
+                return user
+        # Fallback
+        return self._users_fallback.get(user_id, {
+            "user_id": user_id,
+            "tier": "free",
+            "queries_today": 0,
+            "last_reset": date.today(),
+            "total_queries": 0,
+        })
+
+    async def _get_user_tier(self, user_id: int) -> str:
+        """Get user's subscription tier."""
+        data = await self._get_user_data(user_id)
+        return data.get("tier", "free")
+
+    async def check_query_limit(self, user_id: int) -> bool:
+        """Check if user has queries remaining."""
+        user_data = await self._get_user_data(user_id)
+        tier = user_data.get("tier", "free")
+        tier_info = SUBSCRIPTION_TIERS[tier]
+
+        if tier_info["queries_per_day"] == -1:
+            return True
+
+        # Reset daily counter if needed
+        last_reset = user_data.get("last_reset")
+        today = date.today()
+        queries_today = user_data.get("queries_today", 0)
+
+        if last_reset and last_reset < today:
+            queries_today = 0
+            if is_db_available():
+                await reset_daily_queries(user_id)
+            elif user_id in self._users_fallback:
+                self._users_fallback[user_id]["queries_today"] = 0
+                self._users_fallback[user_id]["last_reset"] = today
+
+        has_queries = queries_today < tier_info["queries_per_day"]
+
+        if not has_queries:
+            user_analytics.track_event(
+                user_id=str(user_id),
+                event='query_limit_hit',
+                properties={'tier': tier, 'queries_used': queries_today}
+            )
+            record_query_limit_hit(tier)
+
+        return has_queries
+
+    async def get_remaining_queries(self, user_id: int) -> int:
+        """Get remaining queries for today."""
+        user_data = await self._get_user_data(user_id)
+        tier = user_data.get("tier", "free")
+        tier_info = SUBSCRIPTION_TIERS[tier]
+
+        if tier_info["queries_per_day"] == -1:
+            return -1
+
+        queries_today = user_data.get("queries_today", 0)
+        last_reset = user_data.get("last_reset")
+        if last_reset and last_reset < date.today():
+            queries_today = 0
+
+        return max(0, tier_info["queries_per_day"] - queries_today)
+
+    async def increment_usage(self, user_id: int):
+        """Increment query usage."""
+        if is_db_available():
+            await increment_query_count(user_id)
+        elif user_id in self._users_fallback:
+            self._users_fallback[user_id]["queries_today"] = (
+                self._users_fallback[user_id].get("queries_today", 0) + 1
+            )
+
+    # =====================================================
+    # COMMANDS
+    # =====================================================
+
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Welcome message and registration"""
         user_id = update.effective_user.id
+        username = update.effective_user.username
+        first_name = update.effective_user.first_name
 
-        # Record command usage
         record_command_metrics('start', str(user_id))
 
-        # Track new user signup
-        is_new_user = user_id not in self.users_db
+        # Register user in DB (Step 2)
+        is_new = True
+        if is_db_available():
+            existing = await get_user(user_id)
+            is_new = existing is None
+            await get_or_create_user(user_id, username, first_name)
+        else:
+            is_new = user_id not in self._users_fallback
+            if is_new:
+                self._users_fallback[user_id] = {
+                    "user_id": user_id,
+                    "tier": "free",
+                    "joined": datetime.now().isoformat(),
+                    "queries_today": 0,
+                    "last_reset": date.today(),
+                    "total_queries": 0,
+                }
 
-        if is_new_user:
-            self.users_db[user_id] = {
-                "tier": "free",
-                "joined": datetime.now().isoformat(),
-                "queries_today": 0,
-                "last_reset": datetime.now().date().isoformat(),
-            }
-
-            # Track signup event
+        if is_new:
             user_analytics.track_event(
                 user_id=str(user_id),
                 event='user_signup',
-                properties={
-                    'username': update.effective_user.username,
-                    'first_name': update.effective_user.first_name,
-                }
+                properties={'username': username, 'first_name': first_name}
             )
-
-            # Record Prometheus metric
             record_user_signup('free')
+            bot_logger.info("New user signup", extra={
+                'user_id': str(user_id), 'username': username, 'tier': 'free'
+            })
 
-            bot_logger.info(
-                "New user signup",
-                extra={
-                    'user_id': str(user_id),
-                    'username': update.effective_user.username,
-                    'tier': 'free'
-                }
-            )
+        tier = await self._get_user_tier(user_id)
+        remaining = await self.get_remaining_queries(user_id)
 
         welcome_msg = f"""
 🏢 *Welcome to Dubai Estate AI!*
@@ -188,8 +298,8 @@ I'm your AI-powered real estate analyst for the Dubai property market.
 • Compare properties side-by-side
 • Monitor market trends
 
-📊 *Your Plan:* {SUBSCRIPTION_TIERS[self.users_db[user_id]['tier']]['name']}
-📈 *Queries Left Today:* {self.get_remaining_queries(user_id)}
+📊 *Your Plan:* {SUBSCRIPTION_TIERS[tier]['name']}
+📈 *Queries Left Today:* {remaining if remaining >= 0 else 'Unlimited'}
 
 💡 *Quick Start:*
 Just send me a message like:
@@ -198,13 +308,12 @@ Just send me a message like:
 • "Compare Marina Gate vs Princess Tower"
 • "Calculate chiller cost for 1500 sqft Empower property"
 
+🎤 *Voice messages supported!* Just record and send.
+
 Type /help for all commands or /subscribe to upgrade!
         """
 
-        await update.message.reply_text(
-            welcome_msg,
-            parse_mode="Markdown",
-        )
+        await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show help message"""
@@ -226,6 +335,8 @@ Type /help for all commands or /subscribe to upgrade!
 
 /subscribe - View and upgrade subscription plans
 
+/manage - Manage your subscription (billing portal)
+
 /status - Check your account status and usage
 
 /new - Start a fresh conversation (clear context)
@@ -236,6 +347,9 @@ You can also just type naturally:
 • "Show me villas in Arabian Ranches"
 • "Is Business Bay oversupplied in 2026?"
 • "Calculate ROI for 2.5M apartment in Downtown"
+
+🎤 *Voice Messages:*
+Send a voice note and I'll transcribe and analyze it!
 
 💡 *Follow-up questions work!*
 After an analysis, you can ask "What about JBR?" or "Which one has better ROI?" and I'll remember the context.
@@ -250,7 +364,7 @@ I'll understand and help! 🤖
         user_id = update.effective_user.id
         record_command_metrics('search', str(user_id))
 
-        if not self.check_query_limit(user_id):
+        if not await self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
             return
 
@@ -261,17 +375,23 @@ I'll understand and help! 🤖
             )
             return
 
-        # Send typing indicator
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
             uid = str(user_id)
             search_query = f"Search for properties: {query}. Return top 5 results with key metrics."
+            start = time.time()
             result = await handle_query(search_query, user_id=uid)
-            self.increment_usage(user_id)
+            elapsed = (time.time() - start) * 1000
+            await self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
             self.conversation_store.update(uid, search_query, response_text)
             update_active_conversations(self.conversation_store.active_session_count())
+            # Log to DB (Step 2)
+            if is_db_available():
+                await log_conversation(user_id, search_query, response_text,
+                                       response_time_ms=elapsed,
+                                       tools_used=result.tools_used if hasattr(result, 'tools_used') else [])
             await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e, user_id=str(user_id), query=query)
@@ -284,7 +404,7 @@ I'll understand and help! 🤖
         """Analyze a specific property"""
         user_id = update.effective_user.id
 
-        if not self.check_query_limit(user_id):
+        if not await self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
             return
 
@@ -295,35 +415,33 @@ I'll understand and help! 🤖
             )
             return
 
-        # Send progress indicator with time estimate
         progress_msg = await update.message.reply_text(
-            "🔍 Analyzing...\n"
-            "⏱️ This will take 30-60 seconds"
+            "🔍 Analyzing...\n⏱️ This will take 30-60 seconds"
         )
 
         try:
-            # Call main.py with concise analysis (user can request full via button)
             full_query = f"Analyze this property: {property_query}"
-
             uid = str(user_id)
+            start = time.time()
             result = await handle_query(full_query, user_id=uid)
-
-            self.increment_usage(user_id)
-
-            # Extract response text
+            elapsed = (time.time() - start) * 1000
+            await self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
 
-            # Delete progress message
             try:
                 await progress_msg.delete()
             except:
                 pass
 
-            # Update conversation session
             self.conversation_store.update(uid, full_query, response_text)
             update_active_conversations(self.conversation_store.active_session_count())
 
-            # Add interactive buttons for follow-up actions
+            if is_db_available():
+                await log_conversation(user_id, full_query, response_text,
+                                       response_time_ms=elapsed,
+                                       tools_used=result.tools_used if hasattr(result, 'tools_used') else [])
+
+            # Interactive buttons
             keyboard = [
                 [
                     InlineKeyboardButton("📊 Full Report", callback_data=f"full_{property_query[:50]}"),
@@ -335,8 +453,9 @@ I'll understand and help! 🤖
                 ]
             ]
 
-            # Add PDF button for Pro/Enterprise users
-            if self.users_db[user_id]["tier"] in ["pro", "enterprise"]:
+            # PDF button for Pro/Enterprise (Step 5)
+            tier = await self._get_user_tier(user_id)
+            if tier in ["pro", "enterprise"]:
                 keyboard.append([
                     InlineKeyboardButton("📄 Generate PDF Report", callback_data=f"pdf_{property_query[:50]}")
                 ])
@@ -353,7 +472,7 @@ I'll understand and help! 🤖
     async def cmd_subscribe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show subscription options"""
         user_id = update.effective_user.id
-        current_tier = self.users_db.get(user_id, {}).get("tier", "free")
+        current_tier = await self._get_user_tier(user_id)
 
         msg = "💳 *Subscription Plans*\n\n"
 
@@ -367,7 +486,7 @@ I'll understand and help! 🤖
             msg += "\n".join(f"• {feature}" for feature in tier_info['features'])
             msg += "\n\n"
 
-            if not is_current:
+            if not is_current and tier_id != "free":
                 keyboard.append([
                     InlineKeyboardButton(
                         f"Upgrade to {tier_info['name']}",
@@ -381,10 +500,17 @@ I'll understand and help! 🤖
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show user status"""
         user_id = update.effective_user.id
-        user_data = self.users_db.get(user_id, {})
+        user_data = await self._get_user_data(user_id)
 
-        tier_info = SUBSCRIPTION_TIERS.get(user_data.get("tier", "free"), {})
-        queries_remaining = self.get_remaining_queries(user_id)
+        tier = user_data.get("tier", "free")
+        tier_info = SUBSCRIPTION_TIERS.get(tier, {})
+        queries_remaining = await self.get_remaining_queries(user_id)
+        total = user_data.get("total_queries", 0)
+        joined = user_data.get("joined_at", user_data.get("joined", "N/A"))
+        if hasattr(joined, "strftime"):
+            joined = joined.strftime("%Y-%m-%d")
+        elif isinstance(joined, str):
+            joined = joined[:10]
 
         msg = f"""
 📊 *Your Account Status*
@@ -393,7 +519,8 @@ I'll understand and help! 🤖
 *Price:* AED {tier_info.get('price', 0)}/month
 *Queries Today:* {user_data.get('queries_today', 0)}
 *Queries Remaining:* {queries_remaining if queries_remaining >= 0 else 'Unlimited'}
-*Member Since:* {user_data.get('joined', 'N/A')[:10]}
+*Total Queries:* {total}
+*Member Since:* {joined}
 
 Type /subscribe to upgrade for more queries and features!
         """
@@ -404,7 +531,7 @@ Type /subscribe to upgrade for more queries and features!
         """Get market trends"""
         user_id = update.effective_user.id
 
-        if not self.check_query_limit(user_id):
+        if not await self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
             return
 
@@ -419,11 +546,17 @@ Type /subscribe to upgrade for more queries and features!
                 f"and investment recommendation."
             )
             uid = str(user_id)
+            start = time.time()
             result = await handle_query(trends_query, user_id=uid)
-            self.increment_usage(user_id)
+            elapsed = (time.time() - start) * 1000
+            await self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
             self.conversation_store.update(uid, trends_query, response_text)
             update_active_conversations(self.conversation_store.active_session_count())
+            if is_db_available():
+                await log_conversation(user_id, trends_query, response_text,
+                                       response_time_ms=elapsed,
+                                       tools_used=result.tools_used if hasattr(result, 'tools_used') else [])
             await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e, user_id=str(user_id), query=zone)
@@ -436,7 +569,7 @@ Type /subscribe to upgrade for more queries and features!
         """Compare properties"""
         user_id = update.effective_user.id
 
-        if not self.check_query_limit(user_id):
+        if not await self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
             return
 
@@ -457,11 +590,17 @@ Type /subscribe to upgrade for more queries and features!
                 f"chiller costs, ROI, and recommendation."
             )
             uid = str(user_id)
+            start = time.time()
             result = await handle_query(compare_query, user_id=uid)
-            self.increment_usage(user_id)
+            elapsed = (time.time() - start) * 1000
+            await self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
             self.conversation_store.update(uid, compare_query, response_text)
             update_active_conversations(self.conversation_store.active_session_count())
+            if is_db_available():
+                await log_conversation(user_id, compare_query, response_text,
+                                       response_time_ms=elapsed,
+                                       tools_used=result.tools_used if hasattr(result, 'tools_used') else [])
             await self.send_split_message(update, response_text)
         except Exception as e:
             error_msg = self.format_error_message(e, user_id=str(user_id), query=query)
@@ -479,35 +618,71 @@ Type /subscribe to upgrade for more queries and features!
         update_active_conversations(self.conversation_store.active_session_count())
         await update.message.reply_text("🔄 Conversation reset. Ask me anything about Dubai real estate!")
 
+    async def cmd_manage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Open Stripe Customer Portal for subscription management (Step 4)."""
+        user_id = update.effective_user.id
+        record_command_metrics('manage', str(user_id))
+
+        if not is_stripe_configured():
+            await update.message.reply_text(
+                "Subscription management is not available yet.\n"
+                "Contact billing@dubaiestate.ai for help."
+            )
+            return
+
+        user_data = await self._get_user_data(user_id)
+        stripe_customer_id = user_data.get("stripe_customer_id")
+
+        if not stripe_customer_id:
+            await update.message.reply_text(
+                "No active subscription found.\nUse /subscribe to get started!"
+            )
+            return
+
+        portal_url = await create_customer_portal_session(stripe_customer_id)
+        if portal_url:
+            keyboard = [[InlineKeyboardButton("🔧 Manage Subscription", url=portal_url)]]
+            await update.message.reply_text(
+                "Click below to manage your subscription, update payment method, or cancel:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await update.message.reply_text("Could not create portal session. Please try again.")
+
     async def cmd_reset_limit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin command to reset query limits for testing"""
         user_id = update.effective_user.id
         uid = str(user_id)
 
-        # Check if user is admin
         if uid not in self.admin_ids and str(user_id) not in self.admin_ids:
             await update.message.reply_text("⛔ Admin access required.")
             return
 
-        # Reset limit for specified user or self
         if context.args:
             target_user_id = int(context.args[0])
         else:
             target_user_id = user_id
 
-        if target_user_id in self.users_db:
-            self.users_db[target_user_id]["queries_today"] = 0
-            self.users_db[target_user_id]["last_reset"] = datetime.now().date().isoformat()
+        if is_db_available():
+            await reset_daily_queries(target_user_id)
+            await update.message.reply_text(f"✅ Query limit reset for user {target_user_id}")
+        elif target_user_id in self._users_fallback:
+            self._users_fallback[target_user_id]["queries_today"] = 0
+            self._users_fallback[target_user_id]["last_reset"] = date.today()
             await update.message.reply_text(f"✅ Query limit reset for user {target_user_id}")
         else:
             await update.message.reply_text(f"❌ User {target_user_id} not found in database")
+
+    # =====================================================
+    # MESSAGE HANDLERS
+    # =====================================================
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle natural language queries"""
         user_id = update.effective_user.id
         uid = str(user_id)
 
-        if not self.check_query_limit(user_id):
+        if not await self.check_query_limit(user_id):
             await self.send_upgrade_message(update)
             return
 
@@ -518,28 +693,30 @@ Type /subscribe to upgrade for more queries and features!
         record_followup_detected(followup)
         conv_context = self.conversation_store.get_context(uid) if followup else None
 
-        # Send progress indicator
         progress_msg = await update.message.reply_text(
-            "🔍 Analyzing...\n"
-            "⏱️ This will take 30-60 seconds"
+            "🔍 Analyzing...\n⏱️ This will take 30-60 seconds"
         )
 
         try:
+            start = time.time()
             result = await handle_query(query, user_id=uid, conversation_context=conv_context)
-            self.increment_usage(user_id)
+            elapsed = (time.time() - start) * 1000
+            await self.increment_usage(user_id)
             response_text = result.response if hasattr(result, 'response') else str(result)
 
-            # Delete progress message
             try:
                 await progress_msg.delete()
             except:
                 pass
 
-            # Update conversation session (even fresh requests start/replace a session)
             self.conversation_store.update(uid, query, response_text)
             update_active_conversations(self.conversation_store.active_session_count())
 
-            # Add interactive buttons for follow-up actions
+            if is_db_available():
+                await log_conversation(user_id, query, response_text,
+                                       response_time_ms=elapsed,
+                                       tools_used=result.tools_used if hasattr(result, 'tools_used') else [])
+
             keyboard = [
                 [
                     InlineKeyboardButton("📊 Full Report", callback_data=f"full_{query[:50]}"),
@@ -560,6 +737,65 @@ Type /subscribe to upgrade for more queries and features!
             except:
                 await update.message.reply_text(error_msg)
 
+    async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle voice messages (Step 8)."""
+        user_id = update.effective_user.id
+        uid = str(user_id)
+
+        if not is_transcription_available():
+            await update.message.reply_text(
+                "🎤 Voice messages are not available yet.\n"
+                "Please type your question instead."
+            )
+            return
+
+        if not await self.check_query_limit(user_id):
+            await self.send_upgrade_message(update)
+            return
+
+        await update.message.chat.send_action(ChatAction.TYPING)
+
+        try:
+            # Download the voice file
+            voice = update.message.voice or update.message.audio
+            file = await context.bot.get_file(voice.file_id)
+            audio_bytes = await file.download_as_bytearray()
+
+            # Determine format
+            file_format = "ogg"
+            if voice.mime_type:
+                if "mp3" in voice.mime_type:
+                    file_format = "mp3"
+                elif "wav" in voice.mime_type:
+                    file_format = "wav"
+                elif "m4a" in voice.mime_type:
+                    file_format = "m4a"
+
+            # Transcribe
+            transcribed_text = await transcribe_voice(bytes(audio_bytes), file_format)
+
+            if not transcribed_text:
+                await update.message.reply_text(
+                    "❌ Could not transcribe the voice message.\n"
+                    "Please try again or type your question."
+                )
+                return
+
+            # Show what we heard
+            await update.message.reply_text(f"🎤 I heard: _{transcribed_text}_", parse_mode="Markdown")
+
+            # Process as regular text message
+            update.message.text = transcribed_text
+            await self.handle_message(update, context)
+
+        except Exception as e:
+            error_msg = self.format_error_message(e, user_id=uid, query="[voice message]")
+            await update.message.reply_text(error_msg)
+
+    # =====================================================
+    # CALLBACK HANDLERS
+    # =====================================================
+
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button callbacks"""
         query = update.callback_query
@@ -571,12 +807,11 @@ Type /subscribe to upgrade for more queries and features!
 
         if data.startswith("upgrade_"):
             tier = data.replace("upgrade_", "")
-            await self.process_upgrade(query, tier)
+            await self.process_upgrade(query, tier, user_id)
         elif data.startswith("pdf_"):
             property_query = data.replace("pdf_", "")
-            await self.generate_pdf_report(query, property_query)
+            await self.generate_pdf_report(query, property_query, user_id)
         elif data.startswith("full_"):
-            # User wants full detailed report
             original_query = data.replace("full_", "")
             await query.edit_message_text("📊 Generating full institutional report...\n⏱️ This will take 1-2 minutes")
 
@@ -584,7 +819,6 @@ Type /subscribe to upgrade for more queries and features!
             result = await handle_query(full_query, user_id=uid)
             response_text = result.response if hasattr(result, 'response') else str(result)
 
-            # Send as new message (edit would be too long)
             await query.message.reply_text(response_text[:4096])
             if len(response_text) > 4096:
                 await query.message.reply_text(response_text[4096:8192])
@@ -616,63 +850,101 @@ Type /subscribe to upgrade for more queries and features!
             response_text = result.response if hasattr(result, 'response') else str(result)
             await query.message.reply_text(response_text[:4096])
 
-    def check_query_limit(self, user_id: int) -> bool:
-        """Check if user has queries remaining"""
-        user_data = self.users_db.get(user_id, {})
-        tier = user_data.get("tier", "free")
-        tier_info = SUBSCRIPTION_TIERS[tier]
+    # =====================================================
+    # STRIPE INTEGRATION (Step 4)
+    # =====================================================
 
-        # Reset daily counter if needed
-        today = datetime.now().date().isoformat()
-        if user_data.get("last_reset") != today:
-            # Initialize user if not exists
-            if user_id not in self.users_db:
-                self.users_db[user_id] = {
-                    "tier": "free",
-                    "joined": datetime.now().isoformat(),
-                    "queries_today": 0,
-                    "last_reset": today,
-                }
-            else:
-                self.users_db[user_id]["queries_today"] = 0
-                self.users_db[user_id]["last_reset"] = today
+    async def process_upgrade(self, query, tier: str, user_id: int):
+        """Process subscription upgrade via Stripe."""
+        tier_info = SUBSCRIPTION_TIERS.get(tier, {})
 
-        # Check limit
-        if tier_info["queries_per_day"] == -1:  # Unlimited
-            return True
+        if is_stripe_configured():
+            checkout_url = await create_checkout_session(
+                user_id=user_id,
+                tier=tier,
+                username=query.from_user.username,
+            )
+            if checkout_url:
+                keyboard = [[InlineKeyboardButton("💳 Pay Now", url=checkout_url)]]
+                await query.edit_message_text(
+                    f"💳 *Upgrade to {tier_info['name']}*\n\n"
+                    f"Price: AED {tier_info['price']}/month\n\n"
+                    f"Click below to complete payment securely via Stripe:",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                )
+                return
 
-        has_queries = user_data.get("queries_today", 0) < tier_info["queries_per_day"]
+        # Fallback if Stripe not configured
+        await query.edit_message_text(
+            f"💳 *Upgrade to {tier_info['name']}*\n\n"
+            f"Price: AED {tier_info['price']}/month\n\n"
+            f"To complete payment, please contact:\n"
+            f"📧 billing@dubaiestate.ai\n"
+            f"📱 WhatsApp: +971-XX-XXX-XXXX\n\n"
+            f"Or visit: https://dubaiestate.ai/subscribe",
+            parse_mode="Markdown",
+        )
 
-        # Track when user hits limit
-        if not has_queries:
-            user_analytics.track_event(
-                user_id=str(user_id),
-                event='query_limit_hit',
-                properties={
-                    'tier': tier,
-                    'queries_used': user_data.get("queries_today", 0)
-                }
+    # =====================================================
+    # PDF GENERATION (Step 5)
+    # =====================================================
+
+    async def generate_pdf_report(self, query, property_query: str, user_id: int):
+        """Generate and send a real PDF report for Pro/Enterprise users."""
+        tier = await self._get_user_tier(user_id)
+        if tier not in ["pro", "enterprise"]:
+            await query.edit_message_text(
+                "📄 PDF reports are available for Pro and Enterprise subscribers.\n"
+                "Use /subscribe to upgrade!"
+            )
+            return
+
+        await query.edit_message_text(
+            f"📄 Generating institutional report for: {property_query}\n\n"
+            f"This will take 30-60 seconds..."
+        )
+
+        try:
+            # Run a full analysis
+            uid = str(user_id)
+            full_query = f"Give me a full detailed analysis with all sections for: {property_query}"
+            result = await handle_query(full_query, user_id=uid)
+            response_text = result.response if hasattr(result, 'response') else str(result)
+            tools_used = result.tools_used if hasattr(result, 'tools_used') else []
+
+            # Generate PDF
+            from pdf_generator import generate_report
+            import io
+
+            user_name = query.from_user.first_name or query.from_user.username or "Investor"
+            pdf_bytes = await generate_report(
+                analysis_text=response_text,
+                query=property_query,
+                user_name=user_name,
+                tools_used=tools_used,
             )
 
-        return has_queries
+            # Send as Telegram document
+            pdf_file = io.BytesIO(pdf_bytes)
+            pdf_file.name = f"TrueValue_Report_{property_query[:30].replace(' ', '_')}.pdf"
 
-    def get_remaining_queries(self, user_id: int) -> int:
-        """Get remaining queries for today"""
-        user_data = self.users_db.get(user_id, {})
-        tier = user_data.get("tier", "free")
-        tier_info = SUBSCRIPTION_TIERS[tier]
-
-        if tier_info["queries_per_day"] == -1:
-            return -1  # Unlimited
-
-        return max(0, tier_info["queries_per_day"] - user_data.get("queries_today", 0))
-
-    def increment_usage(self, user_id: int):
-        """Increment query usage"""
-        if user_id in self.users_db:
-            self.users_db[user_id]["queries_today"] = (
-                self.users_db[user_id].get("queries_today", 0) + 1
+            await query.message.reply_document(
+                document=pdf_file,
+                filename=pdf_file.name,
+                caption=f"📄 TrueValue AI Report: {property_query}",
             )
+
+        except Exception as e:
+            bot_logger.error("PDF generation failed: %s", e)
+            await query.message.reply_text(
+                f"❌ Could not generate PDF report.\nError: {str(e)[:100]}\n\n"
+                f"Please try again or contact support."
+            )
+
+    # =====================================================
+    # UTILITIES
+    # =====================================================
 
     async def send_upgrade_message(self, update: Update):
         """Send upgrade prompt when limit reached"""
@@ -693,7 +965,6 @@ Type /subscribe to upgrade for more queries and features!
         """Format error message for user and log it"""
         error_str = str(error)
 
-        # Log the error that we're about to send to the user
         if user_id:
             log_user_error(
                 logger=bot_logger,
@@ -703,7 +974,6 @@ Type /subscribe to upgrade for more queries and features!
                 query=query
             )
 
-        # Check for specific error types
         if "credit balance is too low" in error_str.lower():
             return (
                 "❌ *API Credits Issue*\n\n"
@@ -731,7 +1001,6 @@ Type /subscribe to upgrade for more queries and features!
                 "_Network connectivity error_"
             )
         else:
-            # Generic error
             return (
                 "❌ *Something Went Wrong*\n\n"
                 "An error occurred while processing your request.\n\n"
@@ -743,17 +1012,13 @@ Type /subscribe to upgrade for more queries and features!
         """Split long messages to respect Telegram's 4096 char limit"""
         MAX_LENGTH = 4096
 
-        # Try to send with Markdown first
         try:
             if len(text) <= MAX_LENGTH:
                 await update.message.reply_text(
-                    text,
-                    parse_mode="Markdown",
-                    reply_markup=reply_markup
+                    text, parse_mode="Markdown", reply_markup=reply_markup
                 )
                 return
 
-            # Split by paragraphs first
             parts = []
             current = ""
 
@@ -768,25 +1033,18 @@ Type /subscribe to upgrade for more queries and features!
             if current:
                 parts.append(current.strip())
 
-            # Send all parts
             for i, part in enumerate(parts):
                 is_last = (i == len(parts) - 1)
                 await update.message.reply_text(
-                    part,
-                    parse_mode="Markdown",
+                    part, parse_mode="Markdown",
                     reply_markup=reply_markup if is_last else None
                 )
-                await asyncio.sleep(0.5)  # Small delay between messages
+                await asyncio.sleep(0.5)
 
-        except Exception as e:
-            # If Markdown parsing fails, send without formatting
+        except Exception:
             if len(text) <= MAX_LENGTH:
-                await update.message.reply_text(
-                    text,
-                    reply_markup=reply_markup
-                )
+                await update.message.reply_text(text, reply_markup=reply_markup)
             else:
-                # Split and send without Markdown
                 parts = []
                 current = ""
                 for paragraph in text.split("\n\n"):
@@ -802,43 +1060,13 @@ Type /subscribe to upgrade for more queries and features!
                 for i, part in enumerate(parts):
                     is_last = (i == len(parts) - 1)
                     await update.message.reply_text(
-                        part,
-                        reply_markup=reply_markup if is_last else None
+                        part, reply_markup=reply_markup if is_last else None
                     )
                     await asyncio.sleep(0.5)
 
-    async def process_upgrade(self, query, tier: str):
-        """Process subscription upgrade"""
-        tier_info = SUBSCRIPTION_TIERS.get(tier, {})
-
-        # In production, integrate with Stripe/payment gateway
-        await query.edit_message_text(
-            f"💳 *Upgrade to {tier_info['name']}*\n\n"
-            f"Price: AED {tier_info['price']}/month\n\n"
-            f"To complete payment, please contact:\n"
-            f"📧 billing@dubaiestate.ai\n"
-            f"📱 WhatsApp: +971-XX-XXX-XXXX\n\n"
-            f"Or visit: https://dubaiestate.ai/subscribe",
-            parse_mode="Markdown",
-        )
-
-    async def generate_pdf_report(self, query, property_query: str):
-        """Generate PDF report for Pro/Enterprise users"""
-        await query.edit_message_text(
-            f"📄 Generating institutional report for: {property_query}\n\n"
-            f"This will take 30-60 seconds...",
-            parse_mode="Markdown",
-        )
-
-        # In production, generate actual PDF report
-        await asyncio.sleep(2)
-
-        await query.message.reply_text(
-            "✅ Report generated!\n"
-            "Download link: https://dubaiestate.ai/reports/xxx.pdf\n"
-            "(Link expires in 24 hours)",
-            parse_mode="Markdown",
-        )
+    # =====================================================
+    # RUN
+    # =====================================================
 
     async def run(self):
         """Run the bot"""
