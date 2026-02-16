@@ -22,6 +22,8 @@ CACHE_TTLS = {
     "get_supply_pipeline": 86400,         # 24 hours
     "web_search_dubai": 1800,             # 30 minutes
     "search_building_issues": 86400,      # 24 hours
+    "get_dld_transactions": 86400,        # 24 hours
+    "get_rental_comps": 3600,             # 1 hour
     # No cache for these:
     # calculate_chiller_cost — instant math, no external call
     # analyze_investment — composite, depends on cached sub-tools

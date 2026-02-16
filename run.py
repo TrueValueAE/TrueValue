@@ -71,6 +71,12 @@ async def start_telegram_bot():
     await bot.run()
 
 
+async def start_digest_scheduler():
+    """Run the market digest scheduler."""
+    from digest import start_digest_scheduler as _start
+    await _start()
+
+
 async def init_services():
     """Initialise database and cache connections."""
     from database import init_db
@@ -101,11 +107,12 @@ async def main():
             print("Running in webhook mode (FastAPI only)...")
             await start_fastapi()
         else:
-            # Polling mode: run both FastAPI and Telegram bot
-            print("Running in polling mode (FastAPI + Telegram bot)...")
+            # Polling mode: run FastAPI, Telegram bot, and digest scheduler
+            print("Running in polling mode (FastAPI + Telegram bot + Digest scheduler)...")
             await asyncio.gather(
                 start_fastapi(),
                 start_telegram_bot(),
+                start_digest_scheduler(),
             )
     finally:
         await shutdown_services()

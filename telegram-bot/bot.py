@@ -38,6 +38,9 @@ from database import (
     init_db, close_db, is_db_available,
     get_or_create_user, get_user, increment_query_count,
     log_conversation, reset_daily_queries, log_subscription_event,
+    save_property, get_saved_properties, remove_saved_property, count_saved_properties,
+    get_or_create_referral_code, create_referral, award_referral_bonus, get_referral_stats,
+    set_digest_preference, disable_digest,
 )
 
 # Payments import (Step 4)
@@ -145,6 +148,12 @@ class TelegramBotServer:
         self.application.add_handler(CommandHandler("new", self.cmd_new))
         self.application.add_handler(CommandHandler("manage", self.cmd_manage))
         self.application.add_handler(CommandHandler("reset_limit", self.cmd_reset_limit))
+        self.application.add_handler(CommandHandler("save", self.cmd_save))
+        self.application.add_handler(CommandHandler("watchlist", self.cmd_watchlist))
+        self.application.add_handler(CommandHandler("remove", self.cmd_remove))
+        self.application.add_handler(CommandHandler("referral", self.cmd_referral))
+        self.application.add_handler(CommandHandler("digest", self.cmd_digest))
+        self.application.add_handler(CommandHandler("digest_off", self.cmd_digest_off))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Voice message handler (Step 8)
@@ -216,7 +225,7 @@ class TelegramBotServer:
         return has_queries
 
     async def get_remaining_queries(self, user_id: int) -> int:
-        """Get remaining queries for today."""
+        """Get remaining queries for today (includes bonus queries from referrals)."""
         user_data = await self._get_user_data(user_id)
         tier = user_data.get("tier", "free")
         tier_info = SUBSCRIPTION_TIERS[tier]
@@ -229,7 +238,8 @@ class TelegramBotServer:
         if last_reset and last_reset < date.today():
             queries_today = 0
 
-        return max(0, tier_info["queries_per_day"] - queries_today)
+        bonus = user_data.get("bonus_queries", 0)
+        return max(0, tier_info["queries_per_day"] + bonus - queries_today)
 
     async def increment_usage(self, user_id: int):
         """Increment query usage."""
@@ -269,6 +279,20 @@ class TelegramBotServer:
                     "last_reset": date.today(),
                     "total_queries": 0,
                 }
+
+        # Handle referral code from deep link: /start ref_XXXX
+        if is_new and context.args and is_db_available():
+            arg = context.args[0]
+            if arg.startswith("ref_"):
+                try:
+                    referrer_id = int(arg[4:])
+                    if referrer_id != user_id:
+                        created = await create_referral(referrer_id, user_id)
+                        if created:
+                            await award_referral_bonus(referrer_id, user_id)
+                            bot_logger.info("Referral: %s referred by %s", user_id, referrer_id)
+                except (ValueError, Exception) as exc:
+                    bot_logger.debug("Referral processing failed: %s", exc)
 
         if is_new:
             user_analytics.track_event(
@@ -321,40 +345,38 @@ Type /help for all commands or /subscribe to upgrade!
         help_msg = """
 📚 *Available Commands:*
 
+*Analysis:*
 /search - Search for properties
-  Example: /search Marina 2BR under 2M
-
 /analyze - Deep analysis of a specific property
-  Example: /analyze Marina Gate Tower 1
-
 /compare - Compare multiple properties
-  Example: /compare property1 vs property2
-
 /trends - Get market trends for a zone
-  Example: /trends Business Bay
 
+*Watchlist:*
+/save <id> - Save a property to your watchlist
+/watchlist - View saved properties
+/remove <id> - Remove from watchlist
+
+*Account:*
 /subscribe - View and upgrade subscription plans
+/manage - Manage your subscription
+/status - Check your account status
+/referral - Get your referral link & earn bonus queries
 
-/manage - Manage your subscription (billing portal)
+*Digest:*
+/digest <zones> - Subscribe to market digest
+/digest\\_off - Unsubscribe from digest
 
-/status - Check your account status and usage
+/new - Start a fresh conversation
 
-/new - Start a fresh conversation (clear context)
-
-*Natural Language Queries:*
-You can also just type naturally:
+*Natural Language:*
+Just type naturally — I understand questions like:
 • "What's the best investment in JBR under 3M?"
-• "Show me villas in Arabian Ranches"
-• "Is Business Bay oversupplied in 2026?"
-• "Calculate ROI for 2.5M apartment in Downtown"
+• "Calculate mortgage for 2M property"
+• "Show DLD transactions in Dubai Marina"
+• "What are actual rents for 1BR in Business Bay?"
 
-🎤 *Voice Messages:*
-Send a voice note and I'll transcribe and analyze it!
-
-💡 *Follow-up questions work!*
-After an analysis, you can ask "What about JBR?" or "Which one has better ROI?" and I'll remember the context.
-
-I'll understand and help! 🤖
+🎤 Voice messages supported!
+💡 Follow-up questions work!
         """
 
         await update.message.reply_text(help_msg, parse_mode="Markdown")
@@ -674,6 +696,220 @@ Type /subscribe to upgrade for more queries and features!
             await update.message.reply_text(f"❌ User {target_user_id} not found in database")
 
     # =====================================================
+    # SAVED PROPERTIES / WATCHLIST (Feature 5)
+    # =====================================================
+
+    async def cmd_save(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save a property to watchlist"""
+        user_id = update.effective_user.id
+        record_command_metrics('save', str(user_id))
+
+        if not context.args:
+            await update.message.reply_text(
+                "Please provide a property ID to save.\n"
+                "Example: /save m001\n\n"
+                "You can also use the Save button after search results."
+            )
+            return
+
+        property_id = context.args[0]
+        notes = " ".join(context.args[1:]) if len(context.args) > 1 else None
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        # Try to find property in mock data for richer saves
+        from main import MOCK_PROPERTIES
+        property_data = {"id": property_id}
+        for zone_props in MOCK_PROPERTIES.values():
+            for prop in zone_props:
+                if prop["id"] == property_id:
+                    property_data = prop
+                    break
+
+        saved_id = await save_property(user_id, property_data, notes)
+        if saved_id:
+            title = property_data.get("title", property_id)
+            await update.message.reply_text(f"✅ Saved *{title}* to your watchlist!\n\nUse /watchlist to view all saved properties.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("Property already in your watchlist.")
+
+    async def cmd_watchlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show saved properties"""
+        user_id = update.effective_user.id
+        record_command_metrics('watchlist', str(user_id))
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        props = await get_saved_properties(user_id)
+
+        if not props:
+            await update.message.reply_text(
+                "📋 Your watchlist is empty.\n\n"
+                "Save properties using /save <property_id> or the Save button after searches."
+            )
+            return
+
+        msg = f"📋 *Your Watchlist* ({len(props)} properties)\n\n"
+        keyboard = []
+
+        for p in props:
+            pd = p["property_data"]
+            prop_id = pd.get("id", "unknown")
+            title = pd.get("title", prop_id)
+            msg += f"🏠 *{title}*\n"
+            if pd.get("price"):
+                purpose = pd.get("purpose", "for-sale")
+                label = "Price" if purpose == "for-sale" else "Rent"
+                msg += f"  {label}: AED {pd['price']:,.0f}\n"
+            if pd.get("location"):
+                msg += f"  Location: {pd['location']}\n"
+            if pd.get("area"):
+                msg += f"  Area: {pd['area']} sqft\n"
+            if p.get("notes"):
+                msg += f"  Notes: {p['notes']}\n"
+            msg += f"  Saved: {p['saved_at'][:10] if p['saved_at'] else 'N/A'}\n\n"
+            keyboard.append([
+                InlineKeyboardButton(f"❌ Remove {prop_id}", callback_data=f"removeprop_{prop_id}")
+            ])
+
+        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+        await self.send_split_message(update, msg, reply_markup=reply_markup)
+
+    async def cmd_remove(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Remove a property from watchlist"""
+        user_id = update.effective_user.id
+        record_command_metrics('remove', str(user_id))
+
+        if not context.args:
+            await update.message.reply_text(
+                "Please provide a property ID to remove.\n"
+                "Example: /remove m001\n\n"
+                "Use /watchlist to see your saved properties."
+            )
+            return
+
+        property_id = context.args[0]
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        removed = await remove_saved_property(user_id, property_id)
+        if removed:
+            await update.message.reply_text(f"✅ Removed *{property_id}* from your watchlist.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"Property *{property_id}* not found in your watchlist.", parse_mode="Markdown")
+
+    # =====================================================
+    # REFERRAL SYSTEM (Feature 6)
+    # =====================================================
+
+    async def cmd_referral(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show referral link and stats"""
+        user_id = update.effective_user.id
+        record_command_metrics('referral', str(user_id))
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        referral_code = await get_or_create_referral_code(user_id)
+        stats = await get_referral_stats(user_id)
+
+        bot_username = (await context.bot.get_me()).username
+        referral_link = f"https://t.me/{bot_username}?start={referral_code}"
+
+        msg = f"""
+🎁 *Your Referral Program*
+
+Share your link and earn bonus queries!
+
+🔗 *Your Referral Link:*
+`{referral_link}`
+
+📊 *Stats:*
+• Friends referred: {stats['referral_count']}
+• Bonus queries earned: {stats['total_bonus_earned']}
+
+💰 *Rewards:*
+• You get: *10 bonus queries* per referral
+• Your friend gets: *5 bonus queries*
+
+Share the link above — when someone signs up, you both get rewarded!
+        """
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+
+    # =====================================================
+    # MARKET DIGEST (Feature 7)
+    # =====================================================
+
+    async def cmd_digest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Subscribe to market digest"""
+        user_id = update.effective_user.id
+        record_command_metrics('digest', str(user_id))
+
+        if not context.args:
+            await update.message.reply_text(
+                "📰 *Market Digest*\n\n"
+                "Get automated market updates for your favorite zones!\n\n"
+                "*Usage:*\n"
+                "/digest Dubai Marina, JVC, Business Bay\n"
+                "/digest weekly Dubai Marina\n"
+                "/digest daily Downtown Dubai\n\n"
+                "Use /digest\\_off to unsubscribe.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        # Parse frequency and zones
+        args_text = " ".join(context.args)
+        frequency = "weekly"
+        if args_text.lower().startswith("daily "):
+            frequency = "daily"
+            args_text = args_text[6:]
+        elif args_text.lower().startswith("weekly "):
+            frequency = "weekly"
+            args_text = args_text[7:]
+
+        zones = [z.strip() for z in args_text.split(",") if z.strip()]
+        if not zones:
+            await update.message.reply_text("Please specify at least one zone.\nExample: /digest Dubai Marina, JVC")
+            return
+
+        await set_digest_preference(user_id, frequency, zones)
+
+        zones_list = ", ".join(zones)
+        await update.message.reply_text(
+            f"✅ *Digest subscribed!*\n\n"
+            f"📅 Frequency: {frequency.title()}\n"
+            f"📍 Zones: {zones_list}\n\n"
+            f"You'll receive market updates with price trends, yield shifts, and notable transactions.\n\n"
+            f"Use /digest\\_off to unsubscribe.",
+            parse_mode="Markdown",
+        )
+
+    async def cmd_digest_off(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Unsubscribe from market digest"""
+        user_id = update.effective_user.id
+        record_command_metrics('digest_off', str(user_id))
+
+        if not is_db_available():
+            await update.message.reply_text("Database not available. Please try again later.")
+            return
+
+        await disable_digest(user_id)
+        await update.message.reply_text("✅ Market digest unsubscribed.\n\nUse /digest to re-subscribe anytime.")
+
+    # =====================================================
     # MESSAGE HANDLERS
     # =====================================================
 
@@ -849,6 +1085,39 @@ Type /subscribe to upgrade for more queries and features!
             result = await handle_query(web_query, user_id=uid)
             response_text = result.response if hasattr(result, 'response') else str(result)
             await query.message.reply_text(response_text[:4096])
+
+        elif data.startswith("save_"):
+            property_id = data.replace("save_", "")
+            if is_db_available():
+                saved = await save_property(user_id, {"id": property_id, "source": "inline_save"})
+                if saved:
+                    await query.answer("Saved to watchlist!", show_alert=False)
+                else:
+                    await query.answer("Already in watchlist", show_alert=False)
+            else:
+                await query.answer("Database not available", show_alert=True)
+
+        elif data.startswith("removeprop_"):
+            property_id = data.replace("removeprop_", "")
+            if is_db_available():
+                removed = await remove_saved_property(user_id, property_id)
+                if removed:
+                    await query.answer("Removed from watchlist", show_alert=False)
+                    # Refresh watchlist
+                    props = await get_saved_properties(user_id)
+                    if props:
+                        msg = "📋 *Your Watchlist*\n\n"
+                        for p in props:
+                            pd = p["property_data"]
+                            msg += f"• *{pd.get('title', pd.get('id', 'Unknown'))}*\n"
+                            if pd.get("price"):
+                                msg += f"  Price: AED {pd['price']:,.0f}\n"
+                            if pd.get("location"):
+                                msg += f"  Location: {pd['location']}\n"
+                            msg += f"  Saved: {p['saved_at'][:10] if p['saved_at'] else 'N/A'}\n\n"
+                        await query.edit_message_text(msg, parse_mode="Markdown")
+                    else:
+                        await query.edit_message_text("📋 Your watchlist is empty.")
 
     # =====================================================
     # STRIPE INTEGRATION (Step 4)

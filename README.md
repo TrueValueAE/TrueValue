@@ -1,382 +1,250 @@
-# 🏢 Dubai Estate - Complete PropTech Platform
+# TrueValue AI
 
-An **institutional-grade, monetizable** AI-powered real estate platform for Dubai property market. Built with Claude (Anthropic), OpenClaw, and 20+ MCP servers.
+Institutional-grade Dubai real estate investment analysis, delivered via Telegram bot and REST API. Powered by Claude (Anthropic) with 12 specialized analysis tools, 15+ zone coverage, and cost-optimized AI queries (~$0.02/query).
 
-💰 **Ready for commercialization** with Telegram bot, website, API, and subscription tiers.
+## What It Does
 
-## 🎯 What This Is
+Ask a question in natural language via Telegram or the API:
 
-A **complete commercial product** providing institutional-grade property analysis across 4 critical pillars:
+```
+"Analyze a 1BR in Dubai Marina, AED 1.2M, 850 sqft"
+```
 
-### 🏛️ 1. MACRO & MARKET (The "Why Now?" Check)
-- ✅ Supply pipeline analysis (avoid oversupply zones like Business Bay 2026)
-- ✅ Interest rate sensitivity and appreciation forecasts
-- ✅ Oil price correlation for luxury asset safety
-- ✅ Foreign investment flow tracking
+TrueValue returns a scored investment verdict (0-100) covering:
 
-### 💧 2. LIQUIDITY & EXIT (The "Can I Sell?" Check)
-- ✅ Days on Market (DOM) tracking (<45 days = liquid)
-- ✅ Volume/Value divergence detection (spot "fake pumps")
-- ✅ Cash vs. Mortgage ratio analysis
-- ✅ Transaction velocity by zone
+- **Price Analysis** — comparison to zone averages, value assessment
+- **Yield Calculation** — gross/net yield with real rental comps
+- **Chiller Cost Warning** — Empower vs Lootah hidden cost detection (our moat)
+- **Supply Risk** — pipeline analysis, oversupply detection
+- **Liquidity Score** — days on market, transaction volume
+- **Live Web Validation** — Brave Search for current market intel
+- **DLD Transactions** — actual sold prices from Dubai Land Department
+- **Mortgage Modeling** — EMI, total cost, cash vs leveraged returns
 
-### 🏗️ 3. TECHNICAL & ENGINEERING (The "Physical" Check)
-- ✅ **MEP Audit** - Critical chiller capacity charge analysis
-- ✅ **Snagging Reports** - Aggregated from Reddit/Facebook/Google Maps
-- ✅ **Reserve Fund Status** - Building financial health via Mollak
-- ✅ Fixed vs. variable cooling fee assessment
+## Architecture
 
-### ⚖️ 4. LEGAL & REGULATORY (The "Safety" Check)
-- ✅ Title deed verification via Dubai REST
-- ✅ Rental dispute history by zone
-- ✅ Service charge validation via DLD Mollak Index
-- ✅ Encumbrance and lien checking
+```
+┌──────────────────────────────────────────────────────────┐
+│                      User Interfaces                      │
+│  ┌─────────────────────┐  ┌────────────────────────────┐ │
+│  │   Telegram Bot       │  │   FastAPI REST API          │ │
+│  │   17 commands        │  │   /query  /health  /metrics │ │
+│  └──────────┬──────────┘  └──────────────┬─────────────┘ │
+└─────────────┼────────────────────────────┼───────────────┘
+              └──────────┬─────────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │   main.py            │
+              │   Claude Haiku 4.5   │
+              │   12 Tool Functions  │
+              │   Iterative Tool Use │
+              └──────────┬──────────┘
+                         │
+        ┌────────────────┼─────────────────┐
+        │                │                 │
+  ┌─────▼──────┐  ┌──────▼───────┐  ┌─────▼──────┐
+  │ PostgreSQL  │  │ Redis Cache  │  │ External   │
+  │ 7 tables    │  │ Per-tool TTL │  │ APIs       │
+  │ asyncpg     │  │ aioredis     │  │            │
+  └────────────┘  └──────────────┘  └─────┬──────┘
+                                          │
+                                    ┌─────┴──────┐
+                                    │ Bayut      │
+                                    │ Brave      │
+                                    │ DLD        │
+                                    │ Telegram   │
+                                    └────────────┘
+```
 
-## 🚀 Complete Platform Features
+**Background services:**
+- Digest Scheduler — hourly check, sends daily/weekly market digests to subscribers
+- Observability Stack — Prometheus, Grafana, Loki, Tempo (Docker Compose)
 
-### 📱 User Interfaces
-- ✅ **Telegram Bot** - Primary interface for Dubai users
-- ✅ **WhatsApp Integration** - Alternative messaging platform
-- ✅ **Web Application** - Full-featured dashboard
-- 📋 **Mobile Apps** (iOS/Android) - Coming in Phase 2
+## 12 Analysis Tools
 
-### 🔍 Data Sources (20+ Integrated)
-- ✅ **Property Finder** - Listings & analytics
-- ✅ **Bayut** - Comprehensive search
-- ✅ **Dubizzle** - Marketplace scraping
-- ✅ **Property Monitor** - Market intelligence
-- ✅ **Dubai REST API** - Title deed verification
-- ✅ **Dubai Land Department** - Official data
-- ✅ **REIDIN** - Market analytics
-- ✅ **Empower/Lootah** - Chiller cost data
-- ✅ **Reddit/Facebook** - Social intelligence & snagging reports
-- ✅ **Google Maps** - Building reviews
-- ✅ **FRED Economic Data** - Macro indicators
-- ✅ **Mortgage Data** - UAE banks rates
+| Tool | Description | Cache TTL |
+|------|-------------|-----------|
+| `search_bayut_properties` | Property listings from Bayut API + mock fallback | 1 hour |
+| `get_market_trends` | Price trends, yield estimates, occupancy by zone | 1 hour |
+| `get_supply_pipeline` | Upcoming supply, risk level, pipeline units | 6 hours |
+| `analyze_investment` | 4-pillar investment scoring (0-100) | 1 hour |
+| `calculate_chiller_cost` | Empower/Lootah/Palm cost breakdown + warnings | 24 hours |
+| `compare_properties` | Side-by-side comparison matrix | none |
+| `verify_title_deed` | Ownership, encumbrances, DLD verification | 24 hours |
+| `search_building_issues` | Snagging reports from Reddit + web search | 6 hours |
+| `web_search_dubai` | Live Brave Search with Dubai context | 1 hour |
+| `calculate_mortgage` | EMI, total cost, cash vs leveraged yield | none |
+| `get_dld_transactions` | DLD actual sold prices, volume, trends | 24 hours |
+| `get_rental_comps` | Real rental comparables, demand indicator | 1 hour |
 
-### 💰 Monetization Features
-- ✅ **Subscription Tiers** (Free, Basic, Pro, VIP, Agent, Agency, Enterprise)
-- ✅ **Stripe Integration** - Payment processing
-- ✅ **Usage Tracking** - Query limits & analytics
-- ✅ **Lead Generation** - Agent commission model
-- ✅ **White-Label Reports** - For agencies
-- ✅ **API Marketplace** - Developer access
+## 15+ Zones Covered
 
-### 🎯 Core Analysis Tools
+Dubai Marina, Downtown Dubai, Business Bay, JBR, Palm Jumeirah, JVC, International City, Dubai South, JLT, Arjan, Dubai Hills, Arabian Ranches, City Walk, Creek Harbour, Emaar Beachfront
 
-### Installation
+Each zone has curated data for: yield estimates, service charges, average PSF, liquidity scores, supply pipeline risk, and mock property listings.
+
+## Telegram Bot Commands
+
+**Analysis:**
+`/analyze` `/search` `/compare` `/help`
+
+**Watchlist:**
+`/save` `/watchlist` `/remove`
+
+**Account:**
+`/start` `/subscription` `/referral`
+
+**Market Digest:**
+`/digest` `/digest_off`
+
+## Quick Start
+
+### Prerequisites
+- Python 3.11+
+- PostgreSQL (optional — graceful degradation to in-memory)
+- Redis (optional — runs without caching)
+
+### Setup
 
 ```bash
-# Clone or create project directory
-mkdir dubai-estate-agent
-cd dubai-estate-agent
+# Clone and enter directory
+cd TrueValue
 
-# Copy all project files into this directory
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
 
-# Run installation script
-chmod +x install.sh
-./install.sh
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys
 ```
 
-### Configuration
+### Required Environment Variables
 
-1. **Edit `.env` file** with your API keys:
 ```bash
-nano .env
+ANTHROPIC_API_KEY=sk-ant-...    # Required — Claude API
+TELEGRAM_BOT_TOKEN=123456:ABC... # Required — Telegram bot
 ```
 
-2. **Configure MCP servers** in `mcp_config.json` (update paths to absolute paths)
+### Optional Environment Variables
 
-3. **Test servers**:
 ```bash
-./test_mcp_servers.sh
+BAYUT_API_KEY=...          # RapidAPI key for live Bayut data (falls back to mock)
+BRAVE_API_KEY=...          # Brave Search API for live web search
+DATABASE_URL=postgresql://user:pass@host:5432/truevalue
+REDIS_URL=redis://localhost:6379
+STRIPE_SECRET_KEY=sk_...   # Stripe for subscription payments
+OPENAI_API_KEY=sk-...      # OpenAI Whisper for voice transcription
 ```
 
-### Usage Examples
+### Run
 
-#### Example 1: Evaluate a Property
-
-```javascript
-// Ask the agent:
-"Analyze Marina Gate 1, Unit 2506, asking AED 2.5M, 1500 sqft"
-
-// Agent will:
-// 1. Verify title deed via Dubai REST ✓
-// 2. Check liquidity (DOM, volume) ✓
-// 3. Scrape chiller rates for Marina ✓
-// 4. Search for snagging reports ✓
-// 5. Generate institutional report with GO/NO-GO ✓
-```
-
-#### Example 2: Zone Comparison
-
-```javascript
-"Compare Business Bay vs JBR vs Downtown for investment"
-
-// Returns matrix with:
-// - Supply pipeline risk scores
-// - Liquidity rankings
-// - Average DOM by zone
-// - Chiller cost comparison
-// - ROI projections
-```
-
-#### Example 3: Red Flag Detection
-
-```javascript
-"Check if Business Bay has oversupply risk in 2026"
-
-// Agent checks:
-// - Completion schedules
-// - Current inventory
-// - Absorption rates
-// - Returns: RISK LEVEL + recommendation
-```
-
-## 🔑 API Keys Required
-
-### Critical (Must Have)
-1. **Dubai REST API** - Title deed verification
-   - Get from: https://dubairest.gov.ae
-   - Cost: Contact for pricing
-   - **Without this, legal verification won't work**
-
-### Free (Highly Recommended)
-2. **FRED Economic Data** - Interest rates, economic indicators
-   - Get from: https://fred.stlouisfed.org/docs/api/api_key.html
-   - Cost: FREE
-
-3. **Reddit API** - Social intelligence
-   - Get from: https://www.reddit.com/prefs/apps
-   - Cost: FREE
-
-### Commercial (Optional but Powerful)
-4. **Property Finder API** - Listings and analytics
-   - Contact: developers@propertyfinder.ae
-   - Cost: Commercial license
-
-5. **Bayut API** - Market trends
-   - Contact: api@bayut.com
-   - Cost: Commercial license
-
-6. **Google Maps API** - Building reviews
-   - Get from: https://console.cloud.google.com
-   - Cost: $200 free credit/month
-
-## 📊 What You Get
-
-### Institutional Reports
-- Executive summary with GO/NO-GO decision
-- Macro market context
-- Liquidity & exit strategy analysis
-- Technical due diligence findings
-- Legal clearance status
-- Risk matrix with severity scores
-- Actionable recommendations
-
-### Real-Time Alerts
-- **CRITICAL**: New regulatory changes, sudden liquidity drops
-- **HIGH**: Zone oversupply warnings, interest rate changes
-- **MEDIUM**: Service charge increases, chiller rate adjustments
-
-### Analytics Dashboards
-- Zone performance rankings
-- Developer reputation scores
-- Chiller cost heat maps
-- Supply pipeline forecasts
-
-## 🚨 Red Flags Detected
-
-The agent automatically flags:
-
-| Red Flag | Threshold | Severity | Action |
-|----------|-----------|----------|--------|
-| Supply Oversupply | Completion ratio > 2.0 | HIGH | Avoid zone |
-| Liquidity Crisis | DOM > 90 + Volume drop > 40% | CRITICAL | Exit immediately |
-| Chiller Trap | Fixed fees > AED 15/sqft/year | HIGH | Recalculate ROI |
-| Legal Disputes | > 5 rental disputes/year | MEDIUM | Legal review |
-| Developer Risk | Poor delivery track record | HIGH | Avoid developer |
-
-## 📁 Project Structure
-
-```
-dubai-estate-agent/
-├── openclaw_config.json       # Agent configuration
-├── mcp_config.json             # MCP servers config
-├── install.sh                  # Quick setup script
-├── SETUP.md                    # Detailed setup guide
-├── README.md                   # This file
-├── .env                        # API keys (create from template)
-│
-├── mcp-servers/                # MCP server implementations
-│   ├── dubai-rest/            # Title deed verification
-│   ├── chiller-scraper/       # Chiller rate scraping
-│   ├── social-listener/       # Social intelligence
-│   ├── property-finder/       # Property listings
-│   ├── bayut/                 # Market analytics
-│   ├── economic-data/         # Economic indicators
-│   └── mollak/                # Service charge data
-│
-├── data/                       # Data cache and storage
-│   ├── cache/                 # API response cache
-│   ├── reports/               # Generated reports
-│   └── analytics/             # Analysis outputs
-│
-└── logs/                       # Application logs
-```
-
-## 🎓 How It Works
-
-### MCP Architecture
-
-The agent uses **MCP (Model Context Protocol)** to connect multiple specialized servers:
-
-```
-┌─────────────────────────────────────────────────┐
-│          OpenClaw Agent (Claude Code)           │
-│                                                  │
-│  ┌──────────────────────────────────────────┐  │
-│  │   4 Research Pillars                     │  │
-│  │   1. Macro & Market                      │  │
-│  │   2. Liquidity & Exit                    │  │
-│  │   3. Technical & Engineering             │  │
-│  │   4. Legal & Regulatory                  │  │
-│  └──────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        │              │              │
-    ┌───▼───┐     ┌───▼───┐     ┌───▼───┐
-    │Dubai  │     │Chiller│     │Social │
-    │ REST  │     │Scraper│     │Listen │
-    └───────┘     └───────┘     └───────┘
-        │              │              │
-        ▼              ▼              ▼
-    DLD API      Empower/Lootah   Reddit/FB
-```
-
-### Data Flow
-
-1. **User Query** → OpenClaw Agent
-2. **Agent** → Calls relevant MCP servers
-3. **MCP Servers** → Fetch data from external APIs/scraping
-4. **Data Processing** → Cross-reference, analyze, score
-5. **Report Generation** → Institutional-grade output
-6. **Delivery** → PDF/JSON with recommendations
-
-## 🔧 Customization
-
-### Add New Red Flags
-
-Edit `openclaw_config.json`:
-
-```json
-{
-  "risk_framework": {
-    "red_flags": [
-      {
-        "category": "your_custom_flag",
-        "threshold": "your_condition",
-        "severity": "high",
-        "zones_watch": ["Zone1", "Zone2"]
-      }
-    ]
-  }
-}
-```
-
-### Add Custom Metrics
-
-```json
-{
-  "research_modules": {
-    "your_module": {
-      "enabled": true,
-      "data_sources": ["your_api"],
-      "metrics": ["your_metric"]
-    }
-  }
-}
-```
-
-## 📈 Performance
-
-- **Analysis Time**: 30-60 seconds per property
-- **Data Sources**: 10+ integrated APIs
-- **Cache Duration**: 24 hours (configurable)
-- **Report Generation**: < 5 seconds
-- **Concurrent Queries**: Up to 10
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Issue**: MCP server won't start
 ```bash
-# Check logs
-cd mcp-servers/dubai-rest
-node index.js
-# Should see: "Dubai REST API MCP server running on stdio"
+python run.py
 ```
 
-**Issue**: API rate limit exceeded
+This starts three concurrent services:
+1. **FastAPI** on port 8000 (REST API + metrics)
+2. **Telegram bot** in polling mode
+3. **Digest scheduler** (hourly market digest checks)
+
+For webhook mode (production):
 ```bash
-# Check rate limits in openclaw_config.json
-# Increase cache_ttl to reduce API calls
+BOT_MODE=webhook python run.py
 ```
 
-**Issue**: No data returned
+## Database
+
+PostgreSQL via asyncpg with 7 tables:
+
+| Table | Purpose |
+|-------|---------|
+| `users` | User accounts, tiers, query counts, bonus queries, referral codes |
+| `conversations` | Chat history for context |
+| `query_logs` | Query analytics and cost tracking |
+| `subscription_events` | Stripe subscription lifecycle |
+| `saved_properties` | User watchlist (JSONB property data) |
+| `referrals` | Referral tracking with bonus allocation |
+| `digest_preferences` | Market digest subscriptions (zones, frequency) |
+
+Tables are created automatically on startup. Runs without a database (in-memory fallback).
+
+## Testing
+
 ```bash
-# Verify API keys in .env
-# Test API manually:
-curl -H "Authorization: Bearer YOUR_KEY" https://api.endpoint
+# Install test dependencies
+pip install pytest pytest-asyncio
+
+# Run all 118 tests
+python -m pytest tests/test_all.py -v
+
+# Run with Claude API e2e tests (requires ANTHROPIC_API_KEY)
+ANTHROPIC_API_KEY=sk-ant-... python -m pytest tests/test_all.py -v
 ```
 
-## 📚 Documentation
+## Observability
 
-- **SETUP.md** - Comprehensive installation guide
-- **API Integration Guide** - Coming soon
-- **Custom Metrics Guide** - Coming soon
-- **Deployment Guide** - Coming soon
+Optional Docker Compose stack for monitoring:
 
-## 🛣️ Roadmap
+```bash
+cd observability
+docker-compose up -d
+```
 
-- [ ] v1.1 - Add automated portfolio rebalancing
-- [ ] v1.2 - Integrate with WhatsApp for alerts
-- [ ] v1.3 - Add predictive pricing models
-- [ ] v1.4 - Build custom mobile app
-- [ ] v2.0 - Expand to Abu Dhabi market
+- **Grafana** — http://localhost:3000 (admin/admin)
+- **Prometheus** — http://localhost:9090
+- **Loki** — log aggregation
+- **Tempo** — distributed tracing
 
-## ⚖️ Legal & Compliance
+See [GRAFANA_OBSERVABILITY_GUIDE.md](GRAFANA_OBSERVABILITY_GUIDE.md) for dashboard details.
 
-- Complies with DLD data usage policies
-- Rate-limited to respect API terms
-- No sensitive data logging
-- GDPR-compliant data handling
+## Project Structure
 
-## 🤝 Contributing
+```
+TrueValue/
+├── main.py                 # FastAPI app + Claude tool-use engine (12 tools)
+├── run.py                  # Entry point — runs FastAPI + bot + digest scheduler
+├── database.py             # PostgreSQL via asyncpg (7 tables)
+├── cache.py                # Redis caching with per-tool TTLs
+├── digest.py               # Market digest generator + scheduler
+├── payments.py             # Stripe subscription management
+├── observability.py        # Prometheus metrics + structured logging
+├── conversation.py         # Conversation context management
+├── transcription.py        # Voice message transcription (Whisper)
+├── telegram-bot/
+│   └── bot.py              # Telegram bot (17 commands + inline buttons)
+├── tests/
+│   ├── test_all.py         # 118 tests (unit + integration)
+│   └── conftest.py         # Test fixtures
+├── observability/          # Docker Compose monitoring stack
+│   ├── docker-compose.yml
+│   ├── prometheus/
+│   ├── loki/
+│   ├── tempo/
+│   └── grafana/
+├── .env                    # Environment variables (gitignored)
+└── requirements.txt        # Python dependencies
+```
 
-Contributions welcome! Please:
-1. Fork the repository
-2. Create feature branch
-3. Submit pull request
+## Cost
 
-## 📧 Support
+Claude Haiku 4.5 with optimized system prompt and 7-iteration cap:
 
-- Email: support@yourdomain.com
-- Issues: GitHub Issues
-- Documentation: /docs folder
+- **Average query cost**: ~$0.02
+- **91% reduction** from initial Sonnet-based architecture
+- Per-tool caching reduces redundant API calls
 
-## 📄 License
+## Documentation
 
-MIT License - See LICENSE file
+- [ARCHITECTURE.md](ARCHITECTURE.md) — Detailed system architecture and data flows
+- [CONTEXT.md](CONTEXT.md) — Dubai real estate domain knowledge
+- [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) — Production deployment strategies
+- [MONETIZATION_GUIDE.md](MONETIZATION_GUIDE.md) — Business model and pricing tiers
+- [GRAFANA_OBSERVABILITY_GUIDE.md](GRAFANA_OBSERVABILITY_GUIDE.md) — Monitoring stack guide
 
----
+## License
 
-**Built with ❤️ for institutional real estate investors**
-
-**Powered by**: Claude (Anthropic) | OpenClaw | MCP Protocol
-
-**Version**: 1.0.0
-
-**Last Updated**: February 2026
+MIT

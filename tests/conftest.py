@@ -5,9 +5,13 @@ Provides async DB fixtures, cleanup between tests, and shared test utilities.
 """
 
 import os
+import sys
 import asyncio
 import pytest
 import pytest_asyncio
+
+# Ensure project root is on path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Set test environment before imports
 os.environ["ENVIRONMENT"] = "test"
@@ -40,6 +44,9 @@ async def db_pool():
         from database import _pool
         if _pool:
             async with _pool.acquire() as conn:
+                await conn.execute("DELETE FROM digest_preferences WHERE user_id < 0")
+                await conn.execute("DELETE FROM referrals WHERE referrer_id < 0 OR referee_id < 0")
+                await conn.execute("DELETE FROM saved_properties WHERE user_id < 0")
                 await conn.execute("DELETE FROM subscription_events WHERE user_id < 0")
                 await conn.execute("DELETE FROM query_logs WHERE user_id < 0")
                 await conn.execute("DELETE FROM conversations WHERE user_id < 0")

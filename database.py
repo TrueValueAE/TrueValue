@@ -83,10 +83,45 @@ CREATE TABLE IF NOT EXISTS subscription_events (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS saved_properties (
+    id             BIGSERIAL PRIMARY KEY,
+    user_id        BIGINT NOT NULL REFERENCES users(user_id),
+    property_data  JSONB NOT NULL,
+    notes          TEXT,
+    saved_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, (property_data->>'id'))
+);
+
+CREATE TABLE IF NOT EXISTS referrals (
+    id              BIGSERIAL PRIMARY KEY,
+    referrer_id     BIGINT NOT NULL REFERENCES users(user_id),
+    referee_id      BIGINT NOT NULL REFERENCES users(user_id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    bonus_awarded   BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE(referee_id)
+);
+
+CREATE TABLE IF NOT EXISTS digest_preferences (
+    user_id        BIGINT PRIMARY KEY REFERENCES users(user_id),
+    frequency      TEXT NOT NULL DEFAULT 'weekly',
+    zones          TEXT[] NOT NULL DEFAULT '{}',
+    enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    last_sent      TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_created_at ON conversations(created_at);
 CREATE INDEX IF NOT EXISTS idx_query_logs_user_id ON query_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscription_events_user_id ON subscription_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_properties(user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_referrer ON referrals(referrer_id);
+"""
+
+# Additional schema migrations (run after main DDL)
+SCHEMA_MIGRATIONS = """
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bonus_queries INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_code TEXT;
 """
 
 
@@ -110,6 +145,14 @@ async def init_db(database_url: Optional[str] = None) -> None:
         _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
         async with _pool.acquire() as conn:
             await conn.execute(SCHEMA_DDL)
+            # Run migrations for new columns (idempotent)
+            for stmt in SCHEMA_MIGRATIONS.strip().split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    try:
+                        await conn.execute(stmt)
+                    except Exception:
+                        pass  # Column may already exist
         logger.info("Database initialised successfully")
     except Exception as exc:
         logger.error("Failed to initialise database: %s", exc)
@@ -362,4 +405,240 @@ async def log_subscription_event(
             VALUES ($1, $2, $3, $4, $5, $6)
             """,
             user_id, event_type, from_tier, to_tier, stripe_event_id, amount_aed,
+        )
+
+
+# =====================================================
+# SAVED PROPERTIES / WATCHLIST
+# =====================================================
+
+async def save_property(user_id: int, property_data: dict, notes: str = None) -> Optional[int]:
+    """Save a property to user's watchlist. Returns the row ID or None on conflict."""
+    if not _pool:
+        return None
+
+    async with _pool.acquire() as conn:
+        try:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO saved_properties (user_id, property_data, notes)
+                VALUES ($1, $2::jsonb, $3)
+                ON CONFLICT (user_id, (property_data->>'id')) DO UPDATE SET notes = COALESCE($3, saved_properties.notes)
+                RETURNING id
+                """,
+                user_id, json.dumps(property_data), notes,
+            )
+            return row["id"] if row else None
+        except Exception as exc:
+            logger.error("save_property failed: %s", exc)
+            return None
+
+
+async def get_saved_properties(user_id: int) -> list:
+    """Get all saved properties for a user."""
+    if not _pool:
+        return []
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, property_data, notes, saved_at
+            FROM saved_properties
+            WHERE user_id = $1
+            ORDER BY saved_at DESC
+            """,
+            user_id,
+        )
+        result = []
+        for r in rows:
+            data = r["property_data"]
+            if isinstance(data, str):
+                data = json.loads(data)
+            result.append({
+                "id": r["id"],
+                "property_data": data,
+                "notes": r["notes"],
+                "saved_at": r["saved_at"].isoformat() if r["saved_at"] else None,
+            })
+        return result
+
+
+async def remove_saved_property(user_id: int, property_id: str) -> bool:
+    """Remove a property from watchlist by property_data->>'id'."""
+    if not _pool:
+        return False
+
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM saved_properties
+            WHERE user_id = $1 AND property_data->>'id' = $2
+            """,
+            user_id, property_id,
+        )
+        return result != "DELETE 0"
+
+
+async def count_saved_properties(user_id: int) -> int:
+    """Count saved properties for a user."""
+    if not _pool:
+        return 0
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT COUNT(*) as cnt FROM saved_properties WHERE user_id = $1",
+            user_id,
+        )
+        return row["cnt"] if row else 0
+
+
+# =====================================================
+# REFERRAL SYSTEM
+# =====================================================
+
+async def get_or_create_referral_code(user_id: int) -> str:
+    """Get or generate a referral code for a user."""
+    if not _pool:
+        return f"ref_{user_id}"
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT referral_code FROM users WHERE user_id = $1",
+            user_id,
+        )
+        if row and row["referral_code"]:
+            return row["referral_code"]
+
+        code = f"ref_{user_id}"
+        await conn.execute(
+            "UPDATE users SET referral_code = $2 WHERE user_id = $1",
+            user_id, code,
+        )
+        return code
+
+
+async def create_referral(referrer_id: int, referee_id: int) -> bool:
+    """Create a referral link between two users. Returns True if new referral created."""
+    if not _pool:
+        return False
+
+    async with _pool.acquire() as conn:
+        try:
+            await conn.execute(
+                """
+                INSERT INTO referrals (referrer_id, referee_id)
+                VALUES ($1, $2)
+                ON CONFLICT (referee_id) DO NOTHING
+                """,
+                referrer_id, referee_id,
+            )
+            return True
+        except Exception as exc:
+            logger.error("create_referral failed: %s", exc)
+            return False
+
+
+async def award_referral_bonus(referrer_id: int, referee_id: int, referrer_bonus: int = 10, referee_bonus: int = 5) -> None:
+    """Award bonus queries to both referrer and referee."""
+    if not _pool:
+        return
+
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE users SET bonus_queries = bonus_queries + $2 WHERE user_id = $1",
+                referrer_id, referrer_bonus,
+            )
+            await conn.execute(
+                "UPDATE users SET bonus_queries = bonus_queries + $2 WHERE user_id = $1",
+                referee_id, referee_bonus,
+            )
+            await conn.execute(
+                "UPDATE referrals SET bonus_awarded = TRUE WHERE referrer_id = $1 AND referee_id = $2",
+                referrer_id, referee_id,
+            )
+
+
+async def get_referral_stats(user_id: int) -> dict:
+    """Get referral stats for a user."""
+    if not _pool:
+        return {"referral_count": 0, "total_bonus_earned": 0}
+
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT COUNT(*) as cnt,
+                   COALESCE(SUM(CASE WHEN bonus_awarded THEN 10 ELSE 0 END), 0) as bonus
+            FROM referrals
+            WHERE referrer_id = $1
+            """,
+            user_id,
+        )
+        return {
+            "referral_count": row["cnt"] if row else 0,
+            "total_bonus_earned": row["bonus"] if row else 0,
+        }
+
+
+# =====================================================
+# DIGEST PREFERENCES
+# =====================================================
+
+async def set_digest_preference(user_id: int, frequency: str, zones: list) -> None:
+    """Set or update digest preference for a user."""
+    if not _pool:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO digest_preferences (user_id, frequency, zones, enabled)
+            VALUES ($1, $2, $3, TRUE)
+            ON CONFLICT (user_id) DO UPDATE SET
+                frequency = $2,
+                zones = $3,
+                enabled = TRUE
+            """,
+            user_id, frequency, zones,
+        )
+
+
+async def get_digest_subscribers(frequency: str) -> list:
+    """Get all active digest subscribers for a given frequency."""
+    if not _pool:
+        return []
+
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT user_id, zones, last_sent
+            FROM digest_preferences
+            WHERE frequency = $1 AND enabled = TRUE
+            """,
+            frequency,
+        )
+        return [{"user_id": r["user_id"], "zones": r["zones"], "last_sent": r["last_sent"]} for r in rows]
+
+
+async def update_digest_sent(user_id: int) -> None:
+    """Update the last_sent timestamp for a user's digest."""
+    if not _pool:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE digest_preferences SET last_sent = NOW() WHERE user_id = $1",
+            user_id,
+        )
+
+
+async def disable_digest(user_id: int) -> None:
+    """Disable digest for a user."""
+    if not _pool:
+        return
+
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE digest_preferences SET enabled = FALSE WHERE user_id = $1",
+            user_id,
         )

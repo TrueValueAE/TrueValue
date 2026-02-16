@@ -25,7 +25,8 @@
       "Bash(python:*)",
       "Bash(wc:*)",
       "Bash(grep:*)",
-      "Bash(docker-compose up:*)"
+      "Bash(docker-compose up:*)",
+      "Bash(npx shadcn@latest init:*)"
     ]
   }
 }

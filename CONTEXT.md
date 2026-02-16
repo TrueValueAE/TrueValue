@@ -246,7 +246,7 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 - 50K+ real estate agents
 - 3M+ residents (70% expats)
 
-### **Key Zones**
+### **Key Zones (15+ covered)**
 1. **Dubai Marina** - High-end, high liquidity, tourist area
 2. **Downtown Dubai** - Premium, Burj Khalifa area
 3. **Business Bay** - Business district, CAUTION: oversupply risk 2026
@@ -255,6 +255,13 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 6. **Arjan** - Mid-market, family-oriented, high yields
 7. **JVC (Jumeirah Village Circle)** - Affordable, yield trap warning
 8. **International City** - Budget, high yields, lower quality
+9. **JLT (Jumeirah Lake Towers)** - Mid-range, good yields, high liquidity
+10. **Dubai Hills** - Premium community, moderate supply
+11. **Arabian Ranches** - Villa community, low supply risk
+12. **City Walk** - Ultra-premium, low supply, high service charges
+13. **Creek Harbour** - Emerging waterfront, high pipeline supply
+14. **Emaar Beachfront** - Premium beachfront, low supply
+15. **Dubai South** - Budget, highest yields, very high pipeline supply
 
 ### **Typical Prices (2024-2025)**
 - Studio: AED 400K-800K
@@ -299,10 +306,13 @@ Our analysis: 62/100 quality score (MEDIUM concern)
 
 ### **Stack**
 - **Backend:** FastAPI (async, fast, type-safe)
-- **AI:** Claude Sonnet 4 (tool use, long context)
+- **AI:** Claude Haiku 4.5 (tool use, cost-optimized ~$0.02/query)
 - **Search:** Brave Search API (live web validation)
 - **Bot:** python-telegram-bot (async, reliable)
-- **Observability:** Prometheus + Grafana + Loki
+- **Database:** PostgreSQL via asyncpg (7 tables, optional)
+- **Cache:** Redis via aioredis (per-tool TTLs, optional)
+- **Payments:** Stripe (subscription management)
+- **Observability:** Prometheus + Grafana + Loki + Tempo
 - **Deployment:** Local (can deploy to Heroku/Railway)
 
 ### **Why FastAPI?**
@@ -510,7 +520,7 @@ Investment Score: 78/100
 - Full format: 1-2 minutes ✅
 - Accuracy: 85%+ confidence ✅
 - Uptime: 99%+
-- API cost: < AED 0.10/query ✅
+- API cost: ~$0.02/query (~AED 0.07) ✅
 
 ### **UX Metrics (NEW - Feb 2026)**
 - Progress indicator shown: 100% ✅

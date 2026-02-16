@@ -198,7 +198,7 @@ Transform this institutional-grade research tool into a profitable SaaS business
 
 #### Primary: Stripe
 ```python
-# Already integrated in subscription-manager MCP server
+# Integrated in payments.py
 stripe.Customer.create()
 stripe.Subscription.create()
 ```

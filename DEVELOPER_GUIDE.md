@@ -1,491 +1,273 @@
-# 🏗️ Recommended Architecture for Developers
+# TrueValue AI — Developer Guide
 
-## For: Developers who want to build fast and scale later
+## Project Structure
 
----
-
-## 🎯 TLDR - Best Setup
-
-### Phase 1: MVP (Weeks 1-4)
 ```
-Single Server / Your Laptop
-├── One FastAPI/Express app
-├── Claude API calls
-├── Direct API calls to Bayut, Property Finder, etc.
-└── Deploy to Heroku (one click)
-```
-
-### Phase 2: Scale (Months 3-6)
-```
-Microservices
-├── Main API (FastAPI/Express)
-├── MCP Gateway (consolidates all MCP servers)
-├── Database (PostgreSQL)
-├── Redis Cache
-└── Deploy to Docker/AWS
-```
-
-### Phase 3: Production (Months 6+)
-```
-Full Microservices
-├── Separate MCP servers (containerized)
-├── Load balancer
-├── Auto-scaling
-├── Monitoring
-└── Multi-region
+TrueValue/
+├── main.py                 # FastAPI app + Claude tool-use engine (12 tools)
+├── run.py                  # Entry point — asyncio.gather(FastAPI, bot, digest)
+├── database.py             # PostgreSQL via asyncpg (7 tables)
+├── cache.py                # Redis caching with per-tool TTLs
+├── digest.py               # Market digest generator + hourly scheduler
+├── payments.py             # Stripe subscription management
+├── observability.py        # Prometheus metrics + structured logging
+├── conversation.py         # Conversation context management
+├── transcription.py        # Voice message transcription (Whisper)
+├── telegram-bot/
+│   └── bot.py              # Telegram bot (17 commands + inline buttons)
+├── tests/
+│   ├── test_all.py         # 118 tests (unit + integration)
+│   └── conftest.py         # Test fixtures
+├── observability/          # Docker Compose monitoring stack
+│   ├── docker-compose.yml
+│   ├── prometheus/
+│   ├── loki/
+│   ├── tempo/
+│   └── grafana/provisioning/
+├── .env                    # Environment variables (gitignored)
+└── requirements.txt
 ```
 
----
+## Local Development Setup
 
-## 🚀 The Fastest Path (What I Recommend)
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
 
-### **Architecture: Monolith → Gateway → Microservices**
+# Install dependencies
+pip install -r requirements.txt
 
-#### Step 1: Start with Monolith (Week 1)
+# Copy and configure environment
+cp .env.example .env
+# Set at minimum: ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN
 
+# Run the application
+python run.py
+```
+
+This starts three async services via `asyncio.gather`:
+1. FastAPI on port 8000
+2. Telegram bot (polling mode)
+3. Digest scheduler (hourly cycle)
+
+## How the AI Engine Works
+
+### Tool-Use Loop (`main.py`)
+
+The core logic is in `handle_query()`:
+
+1. Build a system prompt with Dubai real estate expertise + 12 tool schemas
+2. Send user query to Claude Haiku 4.5
+3. If Claude returns `tool_use` blocks, execute each tool via `_execute_tool()`
+4. Feed tool results back to Claude as `tool_result` messages
+5. Repeat until Claude returns a text response (or 7 iteration cap)
+
+### Adding a New Tool
+
+1. Write the async function in `main.py`:
 ```python
-# main.py - Everything in one file
+async def my_new_tool(param1: str, param2: int = 10) -> dict:
+    # Try live API, fall back to mock data
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("https://api.example.com/...", timeout=10.0)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+    # Mock fallback
+    return {"result": "mock data", "source": "mock"}
+```
 
-from fastapi import FastAPI
-from anthropic import Anthropic
-import httpx
-import os
-
-app = FastAPI()
-claude = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-# Define tools inline
-async def search_bayut(location: str, purpose: str, min_price: int = None):
-    """Call Bayut API directly"""
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            "https://bayut.p.rapidapi.com/properties/list",
-            params={
-                "locationExternalIDs": location,
-                "purpose": purpose,
-                "priceMin": min_price or 0,
-                "hitsPerPage": 25
-            },
-            headers={
-                "X-RapidAPI-Key": os.getenv("BAYUT_API_KEY"),
-                "X-RapidAPI-Host": "bayut.p.rapidapi.com"
-            }
-        )
-        return response.json()
-
-async def calculate_chiller_cost(provider: str, area_sqft: int):
-    """Calculate chiller costs - no external API needed"""
-    rates = {
-        "empower": {"consumption": 0.58, "capacity": 85},
-        "lootah": {"consumption": 0.52, "capacity": 0}
+2. Add the tool schema to the `TOOLS` list:
+```python
+{
+    "name": "my_new_tool",
+    "description": "What this tool does — be specific for Claude",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "param1": {"type": "string", "description": "..."},
+            "param2": {"type": "integer", "description": "..."}
+        },
+        "required": ["param1"]
     }
-    # Your calculation logic here
-    return {"total_annual_cost": 22500}  # Example
-
-# Main endpoint
-@app.post("/api/query")
-async def handle_query(query: str):
-    """Main query handler"""
-    
-    # Call Claude with tools
-    response = claude.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4000,
-        tools=[
-            {
-                "name": "search_bayut",
-                "description": "Search Bayut for properties",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string"},
-                        "purpose": {"type": "string"},
-                        "min_price": {"type": "number"}
-                    }
-                }
-            },
-            {
-                "name": "calculate_chiller_cost",
-                "description": "Calculate chiller costs",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "provider": {"type": "string"},
-                        "area_sqft": {"type": "number"}
-                    }
-                }
-            }
-        ],
-        messages=[{"role": "user", "content": query}]
-    )
-    
-    # If Claude wants to use tools
-    if response.stop_reason == "tool_use":
-        for block in response.content:
-            if block.type == "tool_use":
-                # Execute tool
-                if block.name == "search_bayut":
-                    result = await search_bayut(**block.input)
-                elif block.name == "calculate_chiller_cost":
-                    result = await calculate_chiller_cost(**block.input)
-                
-                # Send result back to Claude
-                # (simplified - in production, loop until done)
-        
-    return {"response": "Final answer here"}
-
-# Run: uvicorn main:app --reload
+}
 ```
 
-**Deploy to Heroku:**
-```bash
-git init
-heroku create dubai-estate-api
-git push heroku main
+3. Add the dispatch entry in `_execute_tool_raw()`:
+```python
+elif tool_name == "my_new_tool":
+    return await my_new_tool(**tool_input)
 ```
 
-**Time to launch: 1 week**
-
----
-
-#### Step 2: Extract to Gateway (Month 2)
-
-When you have 100+ users, split into:
-
-```
-┌─────────────────────────────────────────┐
-│  Main App (Telegram Bot / API)         │
-│  - User interface                       │
-│  - Calls Claude API                     │
-│  - Routes tool requests to Gateway      │
-└──────────────┬──────────────────────────┘
-               │
-               ▼
-┌─────────────────────────────────────────┐
-│  MCP Gateway (mcp-gateway/server.js)    │
-│  - Single HTTP server                   │
-│  - Exposes all tools via REST           │
-│  - Calls external APIs                  │
-│  - Handles caching                      │
-└─────────────────────────────────────────┘
+4. Optionally add a cache TTL in `cache.py`:
+```python
+CACHE_TTLS = {
+    ...
+    "my_new_tool": 3600,  # 1 hour
+}
 ```
 
-**Benefits:**
-- Main app stays simple
-- Gateway handles all MCP logic
-- Easy to cache responses
-- One server to deploy
+5. Add tests in `tests/test_all.py`.
 
----
+### Zone Data Maps
 
-#### Step 3: Microservices (Month 6+)
+When adding a new zone, you must update all 6 synchronized maps:
 
-When you have 1000+ users, separate services:
+- `BAYUT_LOCATION_IDS` — Bayut API location code
+- `LOCATION_ALIASES` — fuzzy name variants → canonical slug
+- `zone_yield_map` — gross yield estimate (inside `get_market_trends`)
+- `sc_per_sqft_map` — service charge per sqft (inside `analyze_investment`)
+- `zone_avg_psf_map` — average price per sqft (inside `analyze_investment`)
+- `liquidity_map` — liquidity score 0-20 (inside `analyze_investment`)
+- `SUPPLY_PIPELINE` — risk level, units in pipeline
+- `MOCK_PROPERTIES` — 3 representative mock listings
 
+## Database
+
+### Schema
+
+PostgreSQL via asyncpg. Tables are created on startup via `SCHEMA_DDL` in `database.py`. Column migrations run via `SCHEMA_MIGRATIONS`.
+
+The database is entirely optional. When `DATABASE_URL` is not set or connection fails, all database functions return safe defaults (empty lists, None, False). This allows the app to run without PostgreSQL.
+
+### Adding a New Table
+
+1. Add the `CREATE TABLE` statement to `SCHEMA_DDL` in `database.py`
+2. Add any `ALTER TABLE` column additions to `SCHEMA_MIGRATIONS`
+3. Write async functions (e.g., `async def get_thing(...)`)
+4. Always guard with `if _pool is None: return default`
+5. Add cleanup to `tests/conftest.py` `db_pool` fixture
+
+## Cache
+
+Redis via aioredis. The cache layer wraps tool execution in `_execute_tool()`:
+
+- Before executing a tool, check Redis for `tool_name:sha256(args)`
+- On hit, return cached JSON
+- On miss, execute tool, store with tool-specific TTL
+- On Redis unavailable, skip silently
+
+Like the database, Redis is optional. Without `REDIS_URL`, caching is disabled.
+
+## Telegram Bot
+
+### Adding a New Command
+
+1. Write the handler in `telegram-bot/bot.py`:
+```python
+async def cmd_mycommand(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await update.message.reply_text("Response here")
 ```
-┌──────────────┐
-│   Main App   │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────────────────────────────────┐
-│        API Gateway (Kong/Nginx)          │
-└────┬─────┬─────┬─────┬─────┬─────┬──────┘
-     │     │     │     │     │     │
-     ▼     ▼     ▼     ▼     ▼     ▼
-   Bayut Dubai Chiller Social Property ...
-   MCP   REST  MCP     MCP    Finder
-   (8001)(8002)(8003) (8004)  (8005)
+
+2. Register it in `setup_handlers()`:
+```python
+self.app.add_handler(CommandHandler("mycommand", self.cmd_mycommand))
 ```
 
-Each MCP server runs in its own container, can scale independently.
+3. Update the `/help` command text.
 
----
+4. Run `python set_bot_commands.py` to update the Telegram command menu.
 
-## 💻 Local Development Setup
+### Inline Buttons
 
-### What You'll Actually Run:
+Add callback handlers in `handle_callback()`. Callback data uses prefixes for routing:
+- `full_` — full report
+- `compare_` — comparison
+- `mortgage_` — mortgage calculator
+- `websearch_` — web search
+- `save_` — save to watchlist
+- `removeprop_` — remove from watchlist
+
+## Testing
 
 ```bash
-# Terminal 1: Main app (one file!)
-cd dubai-estate-agent
-python main.py
-# Runs on localhost:8000
+# Run all tests (118 total)
+python -m pytest tests/test_all.py -v
 
-# That's it! Everything else is API calls.
+# Run a specific test class
+python -m pytest tests/test_all.py::TestMortgageCalculator -v
+
+# Run with Claude API e2e tests
+ANTHROPIC_API_KEY=sk-ant-... python -m pytest tests/test_all.py -v
 ```
 
-### File Structure:
+Tests cover:
+- Zone data consistency across all maps
+- All 12 tool functions (unit tests with mock data)
+- Tool routing and schema validation
+- Cache configuration
+- Database schema and no-pool fallback
+- Digest generation
+- FastAPI endpoints
+- Bot structure
+- Integration pipelines (multi-tool sequences)
+- Claude API e2e (skipped without API key)
 
-```
-dubai-estate-agent/
-├── main.py                 # Everything here to start
-├── requirements.txt        # Just: fastapi, anthropic, httpx
-├── .env                    # API keys
-└── Procfile               # For Heroku: "web: uvicorn main:app"
-```
+## Observability
 
-**Lines of code: ~200**
+### Metrics
 
----
+`observability.py` exports Prometheus counters and histograms. Scraped at `GET /metrics`.
 
-## 🐳 When to Use Docker
-
-### Don't Use Docker For:
-- ❌ Local development (overkill)
-- ❌ MVP / first 100 users
-- ❌ Heroku deployment (they handle it)
-
-### Use Docker When:
-- ✅ Deploying to AWS/DigitalOcean
-- ✅ Multiple services to orchestrate
-- ✅ Team of developers
-- ✅ Need reproducible environments
-
----
-
-## 🗄️ Database Strategy
-
-### Phase 1 (MVP): SQLite
-```python
-# No setup needed!
-import sqlite3
-conn = sqlite3.connect('users.db')
-```
-
-### Phase 2 (100+ users): PostgreSQL
-```python
-# Heroku Postgres (free tier)
-DATABASE_URL = os.getenv("DATABASE_URL")
-```
-
-### Phase 3 (1000+ users): Managed PostgreSQL
-```python
-# AWS RDS or DigitalOcean Managed DB
-```
-
----
-
-## ⚡ Caching Strategy
-
-### Phase 1: No cache
-Just call APIs directly
-
-### Phase 2: Simple dict cache
-```python
-from datetime import datetime, timedelta
-
-cache = {}
-
-def get_cached(key, ttl_minutes=60):
-    if key in cache:
-        value, timestamp = cache[key]
-        if datetime.now() - timestamp < timedelta(minutes=ttl_minutes):
-            return value
-    return None
-
-def set_cache(key, value):
-    cache[key] = (value, datetime.now())
-```
-
-### Phase 3: Redis
-```python
-import redis
-r = redis.Redis(host='localhost', port=6379)
-```
-
----
-
-## 📊 Where MCP Servers Actually Run
-
-### Development (Your Laptop):
-```
-You don't run separate MCP servers!
-All logic is in main.py
-```
-
-### Production (Cloud):
-
-**Option A: Monolith (Recommended for start)**
-```
-Heroku Dyno
-├── Your app (main.py)
-└── Calls external APIs directly
-```
-
-**Option B: Gateway**
-```
-Server 1: Main app
-Server 2: MCP Gateway (consolidates all tools)
-```
-
-**Option C: Microservices (Later)**
-```
-Container 1: Main app
-Container 2: Bayut MCP
-Container 3: Dubai REST MCP
-Container 4: Chiller MCP
-...
-```
-
----
-
-## 🎯 My Specific Recommendation for YOU
-
-### Week 1: One File, One Server
-
-```python
-# main.py
-from fastapi import FastAPI
-from anthropic import Anthropic
-import httpx
-
-# Put ALL logic here:
-# - Bayut search
-# - Chiller calculator
-# - Dubai REST calls
-# - Reddit scraping
-# - Everything!
-
-# Total: ~500 lines of code
-```
-
-Deploy to Heroku: `git push heroku main`
-
-**Cost: $0 (Heroku free tier)**
-
-### Month 2: Split to Gateway
-
-Create `mcp-gateway/server.js` (I already created this for you!)
-
-Move all tool logic there.
-
-Main app just calls:
-```python
-tool_result = await httpx.post(
-    "http://localhost:8000/api/bayut/search",
-    json={"location": "marina", "purpose": "sale"}
-)
-```
-
-**Cost: ~$30/month (2 servers)**
-
-### Month 6: Microservices (if needed)
-
-Only if you have:
-- 1000+ users
-- Multiple developers
-- Need to scale different parts independently
-
-**Cost: ~$200/month**
-
----
-
-## 🛠️ Using Claude Code (Claude.ai Desktop)
-
-Since you'll use Claude Code to build this:
-
-### Setup Claude Code with Your Codebase:
+### Monitoring Stack
 
 ```bash
-# In your project
-code .
-
-# Claude Code can help you:
-# - Write the monolith main.py
-# - Debug API calls
-# - Write tests
-# - Refactor when ready to split
+cd observability
+docker-compose up -d
 ```
 
-### What to Ask Claude Code:
+- Grafana: http://localhost:3000
+- Prometheus: http://localhost:9090
 
-```
-"Help me write a FastAPI app that:
-1. Takes a user query
-2. Calls Claude API with tools
-3. Executes tools by calling Bayut API, calculating chiller costs
-4. Returns result to user"
-```
-
-Claude Code will write it for you in ~5 minutes.
-
----
-
-## 📝 Checklist for Week 1
-
-- [ ] Create `main.py` with FastAPI
-- [ ] Add Anthropic SDK
-- [ ] Implement 3 core tools:
-  - [ ] Bayut search (call their API)
-  - [ ] Chiller calculator (math only, no API)
-  - [ ] Dubai REST (call their API)
-- [ ] Test locally
-- [ ] Deploy to Heroku
-- [ ] Create Telegram bot that calls your API
-
-**Total time: 1-2 days of coding**
-
----
-
-## 🎓 Learning Resources
-
-### FastAPI Tutorial:
-https://fastapi.tiangolo.com/tutorial/
-
-### Anthropic Tool Use:
-https://docs.anthropic.com/claude/docs/tool-use
-
-### Deploying to Heroku:
-https://devcenter.heroku.com/articles/getting-started-with-python
-
----
-
-## 💡 Key Insight
-
-**You don't need MCP servers as separate processes!**
-
-MCP is just a protocol. You can:
-
-1. **Option A**: Implement tools directly in your app (fastest)
-2. **Option B**: Run MCP servers and call them via HTTP (scalable)
-3. **Option C**: Use OpenClaw's stdio approach (only for dev tools)
-
-For a **product that makes money**, Option A → Option B is the path.
-
----
-
-## 🚀 Final Recommendation
+### Adding Custom Metrics
 
 ```python
-# Week 1: Start here
-main.py (500 lines, everything inline)
-    ↓
-# Month 2: If growing
-main.py + mcp-gateway (2 servers)
-    ↓
-# Month 6: If scaling
-Docker Compose (5-10 microservices)
+from observability import record_query_metric, record_tool_metric
+
+record_query_metric(status="success", tier="pro")
+record_tool_metric(tool_name="my_tool", status="success")
 ```
 
-**Don't over-engineer early. Ship fast, refactor later.**
+## Environment Variables
 
----
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Claude API key |
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token |
+| `BAYUT_API_KEY` | No | RapidAPI key for Bayut (mock fallback) |
+| `BRAVE_API_KEY` | No | Brave Search API key |
+| `DATABASE_URL` | No | PostgreSQL connection string |
+| `REDIS_URL` | No | Redis connection string |
+| `STRIPE_SECRET_KEY` | No | Stripe for payments |
+| `OPENAI_API_KEY` | No | OpenAI Whisper for voice |
+| `BOT_MODE` | No | `polling` (default) or `webhook` |
+| `PORT` | No | FastAPI port (default 8000) |
+| `ENVIRONMENT` | No | `test` to skip DB in tests |
 
-## ❓ FAQ
+## Common Tasks
 
-**Q: Do I run the MCP servers in the package?**
-A: No! Start by calling APIs directly from your main app.
+### Run a test query via API
+```bash
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Analyze a studio in Dubai Marina for 650K AED"}'
+```
 
-**Q: When do I need separate MCP servers?**
-A: When you have 1000+ users and need to scale.
+### Run a test query via CLI
+```bash
+python test_query.py "Analyze a 1BR in Arjan for investment"
+```
 
-**Q: Can I use OpenClaw?**
-A: Use Claude Code to BUILD your app, but the app itself doesn't use OpenClaw.
+### Simulate cost for conversations
+```bash
+python test_cost_sim.py
+```
 
-**Q: Where does this run in production?**
-A: Heroku/AWS/DigitalOcean - one server to start.
-
----
-
-**Ready to code? Ask Claude Code to generate `main.py` for you! 🚀**
+### Set Telegram bot command menu
+```bash
+python set_bot_commands.py
+```
