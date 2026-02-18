@@ -12,7 +12,7 @@ const navLinks = [
   { label: "FAQ", href: "#faq" },
 ];
 
-const TELEGRAM_URL = "https://t.me/TrueValueAI_bot";
+const TELEGRAM_URL = "https://t.me/TrueValueAE_bot";
 
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);

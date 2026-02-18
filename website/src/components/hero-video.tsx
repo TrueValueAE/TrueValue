@@ -802,7 +802,7 @@ function SceneCTA() {
 
       <div className="mt-4 rounded-lg border border-primary/30 bg-primary/10 px-5 py-2.5 text-center animate-scene-float sm:mt-5">
         <div className="text-xs font-semibold text-primary sm:text-sm">Start Free on Telegram</div>
-        <div className="mt-0.5 text-[9px] text-muted-foreground sm:text-xs">@TrueValueAI_bot · No sign-up required</div>
+        <div className="mt-0.5 text-[9px] text-muted-foreground sm:text-xs">@TrueValueAE_bot · No sign-up required</div>
       </div>
     </div>
   );

@@ -256,88 +256,96 @@ class TelegramBotServer:
 
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Welcome message and registration"""
-        user_id = update.effective_user.id
-        username = update.effective_user.username
-        first_name = update.effective_user.first_name
+        try:
+            user_id = update.effective_user.id
+            username = update.effective_user.username
+            first_name = update.effective_user.first_name
 
-        record_command_metrics('start', str(user_id))
+            record_command_metrics('start', str(user_id))
 
-        # Register user in DB (Step 2)
-        is_new = True
-        if is_db_available():
-            existing = await get_user(user_id)
-            is_new = existing is None
-            await get_or_create_user(user_id, username, first_name)
-        else:
-            is_new = user_id not in self._users_fallback
+            # Register user in DB (Step 2)
+            is_new = True
+            if is_db_available():
+                existing = await get_user(user_id)
+                is_new = existing is None
+                await get_or_create_user(user_id, username, first_name)
+            else:
+                is_new = user_id not in self._users_fallback
+                if is_new:
+                    self._users_fallback[user_id] = {
+                        "user_id": user_id,
+                        "tier": "free",
+                        "joined": datetime.now().isoformat(),
+                        "queries_today": 0,
+                        "last_reset": date.today(),
+                        "total_queries": 0,
+                    }
+
+            # Handle referral code from deep link: /start ref_XXXX
+            if is_new and context.args and is_db_available():
+                arg = context.args[0]
+                if arg.startswith("ref_"):
+                    try:
+                        referrer_id = int(arg[4:])
+                        if referrer_id != user_id:
+                            created = await create_referral(referrer_id, user_id)
+                            if created:
+                                await award_referral_bonus(referrer_id, user_id)
+                                bot_logger.info("Referral: %s referred by %s", user_id, referrer_id)
+                    except (ValueError, Exception) as exc:
+                        bot_logger.debug("Referral processing failed: %s", exc)
+
             if is_new:
-                self._users_fallback[user_id] = {
-                    "user_id": user_id,
-                    "tier": "free",
-                    "joined": datetime.now().isoformat(),
-                    "queries_today": 0,
-                    "last_reset": date.today(),
-                    "total_queries": 0,
-                }
+                user_analytics.track_event(
+                    user_id=str(user_id),
+                    event='user_signup',
+                    properties={'username': username, 'first_name': first_name}
+                )
+                record_user_signup('free')
+                bot_logger.info("New user signup", extra={
+                    'user_id': str(user_id), 'username': username, 'tier': 'free'
+                })
 
-        # Handle referral code from deep link: /start ref_XXXX
-        if is_new and context.args and is_db_available():
-            arg = context.args[0]
-            if arg.startswith("ref_"):
-                try:
-                    referrer_id = int(arg[4:])
-                    if referrer_id != user_id:
-                        created = await create_referral(referrer_id, user_id)
-                        if created:
-                            await award_referral_bonus(referrer_id, user_id)
-                            bot_logger.info("Referral: %s referred by %s", user_id, referrer_id)
-                except (ValueError, Exception) as exc:
-                    bot_logger.debug("Referral processing failed: %s", exc)
+            tier = await self._get_user_tier(user_id)
+            remaining = await self.get_remaining_queries(user_id)
 
-        if is_new:
-            user_analytics.track_event(
-                user_id=str(user_id),
-                event='user_signup',
-                properties={'username': username, 'first_name': first_name}
+            welcome_msg = (
+                "🏢 *Welcome to TrueValue.ae!*\n\n"
+                "I'm your AI-powered real estate analyst for the Dubai property market.\n\n"
+                "🎯 *What I Can Do:*\n"
+                "• Search properties across all platforms\n"
+                "• Analyze investment potential with institutional-grade metrics\n"
+                "• Track chiller costs and hidden fees (our secret weapon!)\n"
+                "• Identify red flags and building issues\n"
+                "• Calculate ROI and rental yields\n"
+                "• Compare properties side-by-side\n"
+                "• Monitor market trends\n\n"
+                f"📊 *Your Plan:* {SUBSCRIPTION_TIERS.get(tier, SUBSCRIPTION_TIERS['free'])['name']}\n"
+                f"📈 *Queries Left Today:* {remaining if remaining >= 0 else 'Unlimited'}\n\n"
+                "💡 *Quick Start:*\n"
+                "Just send me a message like:\n"
+                '• "Find 2BR apartments in Marina under 2M"\n'
+                '• "Analyze Boulevard Point Business Bay"\n'
+                '• "Compare Marina Gate vs Princess Tower"\n'
+                '• "Calculate chiller cost for 1500 sqft Empower property"\n\n'
+                "🎤 *Voice messages supported!* Just record and send.\n\n"
+                "Type /help for all commands or /subscribe to upgrade!"
             )
-            record_user_signup('free')
-            bot_logger.info("New user signup", extra={
-                'user_id': str(user_id), 'username': username, 'tier': 'free'
-            })
 
-        tier = await self._get_user_tier(user_id)
-        remaining = await self.get_remaining_queries(user_id)
-
-        welcome_msg = f"""
-🏢 *Welcome to Dubai Estate AI!*
-
-I'm your AI-powered real estate analyst for the Dubai property market.
-
-🎯 *What I Can Do:*
-• Search properties across all platforms
-• Analyze investment potential with institutional-grade metrics
-• Track chiller costs and hidden fees (our secret weapon!)
-• Identify red flags and building issues
-• Calculate ROI and rental yields
-• Compare properties side-by-side
-• Monitor market trends
-
-📊 *Your Plan:* {SUBSCRIPTION_TIERS[tier]['name']}
-📈 *Queries Left Today:* {remaining if remaining >= 0 else 'Unlimited'}
-
-💡 *Quick Start:*
-Just send me a message like:
-• "Find 2BR apartments in Marina under 2M"
-• "Analyze Boulevard Point Business Bay"
-• "Compare Marina Gate vs Princess Tower"
-• "Calculate chiller cost for 1500 sqft Empower property"
-
-🎤 *Voice messages supported!* Just record and send.
-
-Type /help for all commands or /subscribe to upgrade!
-        """
-
-        await update.message.reply_text(welcome_msg, parse_mode="Markdown")
+            await update.message.reply_text(welcome_msg, parse_mode="Markdown")
+        except Exception as exc:
+            bot_logger.error("cmd_start failed for user %s: %s", update.effective_user.id, exc, exc_info=True)
+            try:
+                await update.message.reply_text(
+                    "🏢 Welcome to TrueValue.ae!\n\n"
+                    "I'm your AI-powered Dubai property analyst. "
+                    "Just send me a message like:\n"
+                    "• Find 2BR apartments in Marina under 2M\n"
+                    "• Analyze Boulevard Point Business Bay\n\n"
+                    "Type /help for all commands!"
+                )
+            except Exception:
+                pass
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show help message"""
@@ -1338,16 +1346,27 @@ Share the link above — when someone signs up, you both get rewarded!
     # =====================================================
 
     async def run(self):
-        """Run the bot"""
+        """Run the bot + FastAPI admin dashboard"""
+        import uvicorn
+        from main import app
+        from database import init_db
+
+        # Initialise database pool
+        await init_db()
+
         await self.application.initialize()
         await self.application.start()
         await self.application.updater.start_polling()
 
         print("✅ Telegram bot running...")
-        print(f"📱 Bot ready to receive messages")
+        print("📱 Bot ready to receive messages")
 
-        # Keep running
-        await asyncio.Event().wait()
+        # Start FastAPI (admin dashboard) alongside the bot
+        port = int(os.getenv("PORT", "8000"))
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+        server = uvicorn.Server(config)
+        print(f"🌐 Admin dashboard at http://localhost:{port}/admin/")
+        await server.serve()
 
 
 if __name__ == "__main__":

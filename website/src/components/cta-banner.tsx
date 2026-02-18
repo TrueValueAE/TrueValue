@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 
-const TELEGRAM_URL = "https://t.me/TrueValueAI_bot";
+const TELEGRAM_URL = "https://t.me/TrueValueAE_bot";
 
 export function CTABanner() {
   return (

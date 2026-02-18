@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Check } from "lucide-react";
 
-const TELEGRAM_URL = "https://t.me/TrueValueAI_bot";
+const TELEGRAM_URL = "https://t.me/TrueValueAE_bot";
 
 const tiers = [
   {

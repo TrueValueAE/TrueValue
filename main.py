@@ -44,6 +44,9 @@ from observability import (
     record_web_search,
 )
 
+# Import admin dashboard
+from admin_dashboard import router as admin_router
+
 # =====================================================
 # LOGGING
 # =====================================================
@@ -68,6 +71,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Admin dashboard routes
+app.include_router(admin_router)
+
+# Database init on startup
+from database import init_db, close_db
+
+@app.on_event("startup")
+async def startup():
+    await init_db()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await close_db()
 
 # Anthropic client
 claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))

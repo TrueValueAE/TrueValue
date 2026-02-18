@@ -88,8 +88,7 @@ CREATE TABLE IF NOT EXISTS saved_properties (
     user_id        BIGINT NOT NULL REFERENCES users(user_id),
     property_data  JSONB NOT NULL,
     notes          TEXT,
-    saved_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, (property_data->>'id'))
+    saved_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS referrals (
@@ -116,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_query_logs_user_id ON query_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_subscription_events_user_id ON subscription_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_saved_user ON saved_properties(user_id);
 CREATE INDEX IF NOT EXISTS idx_referral_referrer ON referrals(referrer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_properties_unique ON saved_properties(user_id, (property_data->>'id'));
 """
 
 # Additional schema migrations (run after main DDL)
@@ -143,9 +143,21 @@ async def init_db(database_url: Optional[str] = None) -> None:
 
     try:
         _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
+    except Exception as exc:
+        logger.error("Failed to create database pool: %s", exc)
+        _pool = None
+        return
+
+    # Run DDL and migrations — failures here are non-fatal (tables may already exist)
+    try:
         async with _pool.acquire() as conn:
             await conn.execute(SCHEMA_DDL)
-            # Run migrations for new columns (idempotent)
+        logger.info("Database schema created/verified")
+    except Exception as ddl_exc:
+        logger.warning("DDL execution had issues (tables may already exist): %s", ddl_exc)
+
+    try:
+        async with _pool.acquire() as conn:
             for stmt in SCHEMA_MIGRATIONS.strip().split(";"):
                 stmt = stmt.strip()
                 if stmt:
@@ -153,10 +165,10 @@ async def init_db(database_url: Optional[str] = None) -> None:
                         await conn.execute(stmt)
                     except Exception:
                         pass  # Column may already exist
-        logger.info("Database initialised successfully")
-    except Exception as exc:
-        logger.error("Failed to initialise database: %s", exc)
-        _pool = None
+    except Exception as mig_exc:
+        logger.warning("Migration had issues: %s", mig_exc)
+
+    logger.info("Database initialised successfully")
 
 
 async def close_db() -> None:

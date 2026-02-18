@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowRight, Bot } from "lucide-react";
 
-const TELEGRAM_URL = "https://t.me/TrueValueAI_bot";
+const TELEGRAM_URL = "https://t.me/TrueValueAE_bot";
 
 export function Hero() {
   return (

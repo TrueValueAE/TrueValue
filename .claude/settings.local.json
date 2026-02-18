@@ -26,7 +26,8 @@
       "Bash(wc:*)",
       "Bash(grep:*)",
       "Bash(docker-compose up:*)",
-      "Bash(npx shadcn@latest init:*)"
+      "Bash(npx shadcn@latest init:*)",
+      "Bash(lsof:*)"
     ]
   }
 }
